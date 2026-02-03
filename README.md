@@ -1,6 +1,6 @@
 # Journal Digest (Neuroscience Paper Tracker)
 
-This repo runs a daily/weekly digest that scans neuroscience journal feeds, scores relevance with keywords + GPT, summarizes top papers, and emails a digest. It keeps track of previously seen papers in `seen_papers.json` so you don’t get duplicates.
+This repo runs a daily/weekly digest that scans neuroscience papers (OpenAlex by default), scores relevance with keywords + GPT, summarizes top papers, and emails a digest. It keeps track of previously seen papers in `seen_papers.json` so you don’t get duplicates.
 
 ## How It Runs (GitHub Actions)
 The workflow lives at:
@@ -18,7 +18,7 @@ You can [run the workflow manually](https://github.com/neurochilds/journal-diges
 
 - `days`: Number of days to look back (1–90). Leave blank to use the default from `config.py`.
 - `include_seen`: Set to `true` to include previously seen papers (ignores `seen_papers.json`).
-- `historical`: Set to `true` to use the OpenAlex historical search (better for longer date ranges).
+- `historical`: Set to `true` to use the OpenAlex search (default). Set to `false` to use RSS feeds.
 - `start_date`: Start date in `YYYY-MM-DD` (overrides `days`).
 - `end_date`: End date in `YYYY-MM-DD` (optional).
 - `max_llm_candidates`: Max papers to send for AI scoring (default 40).
@@ -27,7 +27,7 @@ You can [run the workflow manually](https://github.com/neurochilds/journal-diges
 - Look back 7 days:
   - `days: 7`
   - `include_seen: false`
-- Run a specific date range:
+- Run a specific date range (recommended with OpenAlex):
   - `start_date: 2026-01-01`
   - `end_date: 2026-01-15`
   - `historical: true`

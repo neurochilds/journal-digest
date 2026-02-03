@@ -15,9 +15,9 @@ on:
         required: false
         default: "false"
       historical:
-        description: "Use OpenAlex historical search (true/false)"
+        description: "Use OpenAlex search (true/false). Default: true."
         required: false
-        default: "false"
+        default: "true"
       start_date:
         description: "Start date YYYY-MM-DD (overrides days)"
         required: false
@@ -65,6 +65,7 @@ jobs:
           if [ -n "${{ inputs.days }}" ]; then args+=("--days" "${{ inputs.days }}"); fi
           if [ "${{ inputs.include_seen }}" = "true" ]; then args+=("--include-seen"); fi
           if [ "${{ inputs.historical }}" = "true" ]; then args+=("--historical"); fi
+          if [ "${{ inputs.historical }}" = "false" ]; then args+=("--rss"); fi
           if [ -n "${{ inputs.start_date }}" ]; then args+=("--start-date" "${{ inputs.start_date }}"); fi
           if [ -n "${{ inputs.end_date }}" ]; then args+=("--end-date" "${{ inputs.end_date }}"); fi
           if [ -n "${{ inputs.max_llm_candidates }}" ]; then args+=("--max-llm-candidates" "${{ inputs.max_llm_candidates }}"); fi

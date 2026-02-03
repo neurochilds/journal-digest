@@ -744,10 +744,16 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include previously seen papers (ignore seen_papers.json)",
     )
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--historical",
         action="store_true",
-        help="Use OpenAlex API for historical search (better for date ranges > 2 weeks)",
+        help="Use OpenAlex API (default). Best for longer date ranges.",
+    )
+    mode_group.add_argument(
+        "--rss",
+        action="store_true",
+        help="Use RSS feeds instead of OpenAlex (better for very recent items).",
     )
     parser.add_argument(
         "--max-llm-candidates",
@@ -800,12 +806,14 @@ def main(
     start_date: str = None,
     end_date: str = None,
     historical: bool = False,
+    use_rss: bool = False,
     max_llm_candidates: int = None,
 ):
     print(f"Neuroscience Paper Tracker - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
-    if historical:
-        print("MODE: Historical search (OpenAlex API)")
+    use_openalex = historical or not use_rss
+    if use_openalex:
+        print("MODE: OpenAlex search")
     else:
         print("MODE: RSS feeds")
 
@@ -860,7 +868,7 @@ def main(
     # Stage 1: Fetch all papers
     all_papers = []
 
-    if historical:
+    if use_openalex:
         # Use OpenAlex API for historical search
         start_str = cutoff_date.strftime("%Y-%m-%d")
         end_str = end_cutoff.strftime("%Y-%m-%d") if end_cutoff else datetime.now().strftime("%Y-%m-%d")
@@ -1011,5 +1019,6 @@ if __name__ == "__main__":
         start_date=args.start_date,
         end_date=args.end_date,
         historical=args.historical,
+        use_rss=args.rss,
         max_llm_candidates=args.max_llm_candidates,
     )
