@@ -419,9 +419,9 @@ def get_llm_relevance_score(client: OpenAI, paper: dict) -> tuple[int, str]:
     """
     prompt = f"""Rate this paper's relevance (0-100) for a PhD student studying:
 
-1. HIPPOCAMPAL REPRESENTATIONS: What does hippocampal firing represent - sensory features, or internal computations like task state, action plans, and goal-directed sequences?
+1. HIPPOCAMPAL / MTL REPRESENTATIONS: What does hippocampal/entorhinal/MTL activity represent - sensory features, or internal computations like task state, action plans, and goal-directed sequences?
 
-2. MULTISENSORY INTEGRATION: How does the brain (especially hippocampus) combine sensory cues to infer task state?
+2. MULTISENSORY INTEGRATION: How does the brain (especially hippocampus/MTL) combine sensory cues to infer task state?
 
 3. STATE INFERENCE & BELIEF UPDATING: How does the brain infer hidden task states from sensory evidence?
 
@@ -433,10 +433,10 @@ Respond with ONLY a JSON object, no markdown:
 {{"score": <0-100>, "reason": "<one specific sentence - what does this paper ACTUALLY show? Do not exaggerate or stretch relevance.>"}}
 
 BE STRICT AND HONEST:
-- 85-100: ONLY if directly about hippocampal representations OR hippocampal multisensory integration
-- 70-84: State inference/belief updating in decision-making contexts, OR multisensory integration in rodents for behavior
-- 55-69: Hippocampal sequences/replay/remapping, OR navigation-related sensory processing
-- 40-54: General hippocampus/navigation studies
+- 85-100: Directly about hippocampal/MTL representations OR hippocampal/MTL multisensory integration
+- 70-84: Hippocampal/entorhinal sequences, replay, remapping, or task-state/goal coding; OR strong state-inference/belief-updating work tied to hippocampus/MTL
+- 55-69: Navigation/spatial coding/place/grid/time-cell work in hippocampus/entorhinal, or hippocampal computation studies with weaker task-state emphasis
+- 40-54: General hippocampus/MTL cognition or navigation studies
 - 0-39: Not relevant - different topic, clinical/disease focus, technique-only, or only superficially related
 
 PENALIZE (score 0-30):
@@ -700,6 +700,12 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use OpenAlex API for historical search (better for date ranges > 2 weeks)",
     )
+    parser.add_argument(
+        "--max-llm-candidates",
+        type=int,
+        default=None,
+        help="Max number of papers to send for AI scoring (default: 40).",
+    )
     return parser.parse_args()
 
 
@@ -707,7 +713,10 @@ def _parse_args() -> argparse.Namespace:
 # Tightened to avoid matching every generic neuro paper.
 NEURO_ANCHOR_TERMS = [
     # Brain regions relevant to your work
-    "hippocampus", "hippocampal", "entorhinal", "ca1", "ca3", "dentate",
+    "hippocampus", "hippocampal", "hippocampal formation",
+    "entorhinal", "subiculum", "subicular", "presubiculum", "parasubiculum",
+    "perirhinal", "parahippocampal", "parahippocampus", "medial temporal lobe",
+    "ca1", "ca2", "ca3", "ca4", "dentate", "dentate gyrus",
     "prefrontal", "orbitofrontal", "parietal",
     # Neural recording/circuit terms
     "place cell", "grid cell", "time cell", "neuron", "neuronal", "firing",
@@ -736,7 +745,14 @@ def _has_negative_domain_terms(title: str, abstract: str) -> bool:
     return any(t in text for t in NEGATIVE_DOMAIN_TERMS)
 
 
-def main(days_override: int = None, include_seen: bool = False, start_date: str = None, end_date: str = None, historical: bool = False):
+def main(
+    days_override: int = None,
+    include_seen: bool = False,
+    start_date: str = None,
+    end_date: str = None,
+    historical: bool = False,
+    max_llm_candidates: int = None,
+):
     print(f"Neuroscience Paper Tracker - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
     if historical:
@@ -815,13 +831,12 @@ def main(days_override: int = None, include_seen: bool = False, start_date: str 
 
     print(f"\nTotal papers fetched: {len(all_papers)}")
 
-    # Filter out seen papers
+    # Filter out seen papers (do not mark as seen yet)
     new_papers = []
     for paper in all_papers:
         paper_id = get_paper_id(paper)
         if paper_id not in seen_papers:
             new_papers.append(paper)
-            seen_papers.add(paper_id)
 
     print(f"New papers (not seen before): {len(new_papers)}")
 
@@ -848,11 +863,13 @@ def main(days_override: int = None, include_seen: bool = False, start_date: str 
     print(f"\nPapers passing keyword filter (>= {MIN_KEYWORD_SCORE}) + neuro-anchor: {len(keyword_candidates)}")
 
     # Limit to top N by keyword score to avoid excessive LLM API usage
-    MAX_LLM_CANDIDATES = 100
-    if len(keyword_candidates) > MAX_LLM_CANDIDATES:
+    llm_cap = max_llm_candidates if max_llm_candidates is not None else 40
+    if llm_cap < 1:
+        llm_cap = 1
+    if len(keyword_candidates) > llm_cap:
         keyword_candidates.sort(key=lambda x: x['keyword_score_raw'], reverse=True)
-        keyword_candidates = keyword_candidates[:MAX_LLM_CANDIDATES]
-        print(f"Limited to top {MAX_LLM_CANDIDATES} by keyword score for LLM scoring")
+        keyword_candidates = keyword_candidates[:llm_cap]
+        print(f"Limited to top {llm_cap} by keyword score for LLM scoring")
 
     # Fetch missing abstracts from Semantic Scholar (only for papers that passed keyword filter)
     papers_needing_abstract = [p for p in keyword_candidates if not p.get('abstract')]
@@ -892,6 +909,8 @@ def main(days_override: int = None, include_seen: bool = False, start_date: str 
         relevant_papers = relevant_papers[:MAX_PAPERS_PER_DIGEST]
         print(f"Limited to top {MAX_PAPERS_PER_DIGEST}")
 
+    # Mark as seen only after LLM scoring
+    seen_papers.update(get_paper_id(p) for p in scored_papers)
     save_seen_papers(seen_papers)
 
     if not relevant_papers:
@@ -932,4 +951,5 @@ if __name__ == "__main__":
         start_date=args.start_date,
         end_date=args.end_date,
         historical=args.historical,
+        max_llm_candidates=args.max_llm_candidates,
     )

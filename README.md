@@ -21,6 +21,7 @@ You can [run the workflow manually](https://github.com/neurochilds/journal-diges
 - `historical`: Set to `true` to use the OpenAlex historical search (better for longer date ranges).
 - `start_date`: Start date in `YYYY-MM-DD` (overrides `days`).
 - `end_date`: End date in `YYYY-MM-DD` (optional).
+- `max_llm_candidates`: Max papers to send for AI scoring (default 40).
 
 **Examples**
 - Look back 7 days:
@@ -29,6 +30,7 @@ You can [run the workflow manually](https://github.com/neurochilds/journal-diges
 - Run a specific date range:
   - `start_date: 2026-01-01`
   - `end_date: 2026-01-15`
+  - `historical: true`
 
 The workflow will update `seen_papers.json` after each run and commit it back to the repo.
 

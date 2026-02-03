@@ -26,6 +26,10 @@ on:
         description: "End date YYYY-MM-DD"
         required: false
         default: ""
+      max_llm_candidates:
+        description: "Max papers to send for AI scoring (default 40)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -63,6 +67,7 @@ jobs:
           if [ "${{ inputs.historical }}" = "true" ]; then args+=("--historical"); fi
           if [ -n "${{ inputs.start_date }}" ]; then args+=("--start-date" "${{ inputs.start_date }}"); fi
           if [ -n "${{ inputs.end_date }}" ]; then args+=("--end-date" "${{ inputs.end_date }}"); fi
+          if [ -n "${{ inputs.max_llm_candidates }}" ]; then args+=("--max-llm-candidates" "${{ inputs.max_llm_candidates }}"); fi
           python paper_tracker.py "${args[@]}"
 
       - name: Commit seen papers
