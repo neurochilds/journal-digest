@@ -2,8 +2,8 @@ name: Neuro Paper Digest
 
 on:
   schedule:
-    # Daily at 13:00 UTC (adjust as desired)
-    - cron: "0 13 * * *"
+    # Mondays + Thursdays at 08:00 (UTC). Adjust if you want a specific local timezone.
+    - cron: "0 8 * * 1,4"
   workflow_dispatch:
     inputs:
       days:
