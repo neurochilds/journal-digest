@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+venv/
+.env
+config_local.py
+tracker.log
+tracker_error.log
+CLAUDE_NOTES.txt
