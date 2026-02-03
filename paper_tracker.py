@@ -354,6 +354,55 @@ def get_paper_id(entry: dict) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+def _normalize_title(title: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", " ", title.lower())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _title_key(entry: dict) -> str:
+    title_key = _normalize_title(entry.get("title", ""))
+    if not title_key:
+        return ""
+    year = ""
+    if isinstance(entry.get("date"), datetime):
+        year = str(entry["date"].year)
+    return f"{title_key}|{year}" if year else title_key
+
+
+def get_title_id(entry: dict) -> str:
+    """Secondary ID to reduce duplicates across feeds/runs."""
+    key = _title_key(entry)
+    if not key:
+        return ""
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def _dedupe_papers_by_title(papers: list[dict]) -> list[dict]:
+    deduped = {}
+    for paper in papers:
+        key = _title_key(paper)
+        if not key:
+            continue
+        existing = deduped.get(key)
+        if not existing:
+            deduped[key] = paper
+            continue
+
+        # Prefer richer metadata
+        existing_abs = existing.get("abstract", "")
+        new_abs = paper.get("abstract", "")
+        if len(new_abs) > len(existing_abs):
+            deduped[key] = paper
+            continue
+        if existing.get("journal", "Unknown") == "Unknown" and paper.get("journal", "Unknown") != "Unknown":
+            deduped[key] = paper
+            continue
+        if existing.get("authors", "Unknown") == "Unknown" and paper.get("authors", "Unknown") != "Unknown":
+            deduped[key] = paper
+
+    return list(deduped.values())
+
+
 def calculate_keyword_score(title: str, abstract: str) -> tuple[int, list[str]]:
     """
     Calculate a keyword-based relevance score.
@@ -406,7 +455,7 @@ def calculate_keyword_score(title: str, abstract: str) -> tuple[int, list[str]]:
     return score, unique_terms
 
 
-def normalize_keyword_score(raw_score: int, max_expected: int = 80) -> int:
+def normalize_keyword_score(raw_score: int, max_expected: int = 100) -> int:
     """Normalize raw keyword score to 0-100 scale."""
     normalized = min(100, int((raw_score / max_expected) * 100))
     return normalized
@@ -434,9 +483,9 @@ Respond with ONLY a JSON object, no markdown:
 
 BE STRICT AND HONEST:
 - 85-100: Directly about hippocampal/MTL representations OR hippocampal/MTL multisensory integration
-- 70-84: Hippocampal/entorhinal sequences, replay, remapping, or task-state/goal coding; OR strong state-inference/belief-updating work tied to hippocampus/MTL
-- 55-69: Navigation/spatial coding/place/grid/time-cell work in hippocampus/entorhinal, or hippocampal computation studies with weaker task-state emphasis
-- 40-54: General hippocampus/MTL cognition or navigation studies
+- 70-84: Hippocampal/entorhinal sequences, replay, remapping, or task-state/goal coding; OR strong state-inference/belief-updating work in decision-making contexts (even if not hippocampus) with clear neural/cognitive relevance
+- 55-69: Navigation/spatial coding/place/grid/time-cell work in hippocampus/entorhinal; OR task-state/latent-state representation in other regions
+- 40-54: General hippocampus/MTL cognition or navigation studies; or tangential cognitive neuroscience
 - 0-39: Not relevant - different topic, clinical/disease focus, technique-only, or only superficially related
 
 PENALIZE (score 0-30):
@@ -831,11 +880,18 @@ def main(
 
     print(f"\nTotal papers fetched: {len(all_papers)}")
 
+    # Dedupe by normalized title (+ year) to avoid duplicates across feeds
+    deduped_papers = _dedupe_papers_by_title(all_papers)
+    if len(deduped_papers) != len(all_papers):
+        print(f"Deduplicated by title: {len(all_papers)} -> {len(deduped_papers)}")
+    all_papers = deduped_papers
+
     # Filter out seen papers (do not mark as seen yet)
     new_papers = []
     for paper in all_papers:
         paper_id = get_paper_id(paper)
-        if paper_id not in seen_papers:
+        title_id = get_title_id(paper)
+        if paper_id not in seen_papers and (not title_id or title_id not in seen_papers):
             new_papers.append(paper)
 
     print(f"New papers (not seen before): {len(new_papers)}")
@@ -909,8 +965,12 @@ def main(
         relevant_papers = relevant_papers[:MAX_PAPERS_PER_DIGEST]
         print(f"Limited to top {MAX_PAPERS_PER_DIGEST}")
 
-    # Mark as seen only after LLM scoring
-    seen_papers.update(get_paper_id(p) for p in scored_papers)
+    # Mark as seen only after LLM scoring (track both link-based and title-based IDs)
+    for paper in scored_papers:
+        seen_papers.add(get_paper_id(paper))
+        title_id = get_title_id(paper)
+        if title_id:
+            seen_papers.add(title_id)
     save_seen_papers(seen_papers)
 
     if not relevant_papers:
