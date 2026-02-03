@@ -2,8 +2,8 @@ name: Neuro Paper Digest
 
 on:
   schedule:
-    # Mondays + Thursdays at 08:00 (UTC). Adjust if you want a specific local timezone.
-    - cron: "0 8 * * 1,4"
+    # Mondays + Thursdays at 09:45 (UTC). Note: GitHub Actions uses UTC.
+    - cron: "45 9 * * 1,4"
   workflow_dispatch:
     inputs:
       days:
