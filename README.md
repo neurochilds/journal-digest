@@ -7,11 +7,11 @@ The workflow lives at:
 - `.github/workflows/paper-digest.yml`
 
 ### Schedule
-Currently scheduled for **Mondays and Thursdays at 08:00 UTC**.
-If you want **08:00 in your local timezone**, update the cron time accordingly (GitHub schedules use UTC).
+Currently scheduled for **Mondays and Thursdays at 09:45 UTC**.
+If you want **09:45 in your local timezone**, update the cron time accordingly (GitHub schedules use UTC).
 
 ### Manual Runs
-You can run the workflow manually with custom inputs:
+You can [run the workflow manually](https://github.com/neurochilds/journal-digest/actions/workflows/paper-digest.yml) with custom inputs:
 1. Go to **Actions** → **Neuro Paper Digest**.
 2. Click **Run workflow**.
 3. Fill any of the optional inputs:
