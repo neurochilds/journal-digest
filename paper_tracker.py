@@ -22,40 +22,20 @@ import time
 from urllib.parse import quote
 from html import escape as html_escape
 import argparse
+import os
+import tempfile
+from difflib import SequenceMatcher
 
 from openai import OpenAI
 
 from config import (
     GMAIL_ADDRESS, GMAIL_APP_PASSWORD, RECIPIENT_EMAIL,
-    OPENAI_API_KEY, JOURNAL_FEEDS, KEYWORDS,
+    OPENAI_API_KEY, JOURNAL_FEEDS, KEYWORDS, RESEARCH_PROFILE,
     MIN_KEYWORD_SCORE, MIN_COMBINED_SCORE, DAYS_TO_CHECK, MAX_PAPERS_PER_DIGEST
 )
 
 # File to track which papers we've already processed
 SEEN_PAPERS_FILE = Path(__file__).parent / "seen_papers.json"
-
-# Research profile for LLM scoring
-RESEARCH_PROFILE = """PhD student investigating what hippocampal firing actually represents.
-
-CORE RESEARCH QUESTION: Does hippocampal firing represent sensory modalities (space, time, sound),
-or does it reflect more general computations like action plans, task progression, or internally
-generated sequences toward goals?
-
-KEY INTERESTS:
-1. Hippocampal representations - place cells, time cells, "tone cells" - and whether these labels
-   reflect unique computations or are confounded by task structure
-2. Multisensory integration - how hippocampus combines auditory and visual cues to infer task state
-3. The hypothesis that hippocampus encodes task-relevant variables and action plans, not raw
-   sensory input (Buzsaki's "internally generated sequences" framework)
-4. Remapping - what causes it? Sensory changes or changes in task structure/goals?
-5. Goal coding, prospective coding, belief states in hippocampus
-6. General theories: cognitive maps, relational memory, successor representations, sequence generation
-
-LESS INTERESTED IN:
-- Pure technique papers (imaging methods, probes, etc.) unless studying hippocampal cognition
-- Hippocampal papers focused only on molecular mechanisms, disease, or development
-- Papers about other brain regions unless directly relevant to hippocampal function or multisensory integration"""
-
 
 def _require_setting(name: str, value: str):
     if not value:
@@ -87,6 +67,23 @@ def fetch_abstract_from_semantic_scholar_by_doi(doi: str) -> str:
     return ""
 
 
+def title_matches(query_title: str, candidate_title: str) -> bool:
+    """Return True only for a high-confidence bibliographic title match."""
+    query = _normalize_title(query_title)
+    candidate = _normalize_title(candidate_title)
+    if not query or not candidate:
+        return False
+    if query == candidate:
+        return True
+
+    query_tokens = set(query.split())
+    candidate_tokens = set(candidate.split())
+    union = query_tokens | candidate_tokens
+    token_overlap = len(query_tokens & candidate_tokens) / len(union) if union else 0.0
+    character_ratio = SequenceMatcher(None, query, candidate).ratio()
+    return character_ratio >= 0.90 and token_overlap >= 0.75
+
+
 def fetch_abstract_from_semantic_scholar(title: str) -> str:
     """Fetch abstract from Semantic Scholar API via title search (fallback)."""
     try:
@@ -100,7 +97,11 @@ def fetch_abstract_from_semantic_scholar(title: str) -> str:
         if resp.status_code == 200:
             data = resp.json()
             if data.get('data') and len(data['data']) > 0:
-                abstract = data['data'][0].get('abstract', '')
+                result = data['data'][0]
+                if not title_matches(title, result.get('title', '')):
+                    print(f"  Rejected Semantic Scholar title mismatch for: {title[:60]}")
+                    return ""
+                abstract = result.get('abstract', '')
                 if abstract:
                     return abstract
     except Exception:
@@ -119,7 +120,12 @@ def fetch_doi_from_crossref(title: str) -> str:
             data = resp.json()
             items = data.get("message", {}).get("items", [])
             if items:
-                return items[0].get("DOI", "")
+                item = items[0]
+                candidate_titles = item.get("title") or []
+                candidate_title = candidate_titles[0] if candidate_titles else ""
+                if title_matches(title, candidate_title):
+                    return item.get("DOI", "")
+                print(f"  Rejected Crossref title mismatch for: {title[:60]}")
     except Exception:
         pass
     return ""
@@ -224,6 +230,7 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
     # Pagination - OpenAlex returns max 200 per page
     cursor = "*"
     page_count = 0
+    transient_retries = 0
     max_pages = 25  # Safety limit (25 * 200 = 5000 papers max)
 
     print(f"  Searching OpenAlex for neuroscience papers...")
@@ -243,13 +250,17 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
             resp = requests.get(base_url, params=params, headers=headers, timeout=30)
 
             if resp.status_code == 429:
+                transient_retries += 1
+                if transient_retries > 3:
+                    raise RuntimeError("OpenAlex rate limit persisted after 3 retries")
                 print("  Rate limited, waiting 5 seconds...")
                 time.sleep(5)
                 continue
 
             if resp.status_code != 200:
-                print(f"  OpenAlex error: {resp.status_code}")
-                break
+                raise RuntimeError(f"OpenAlex returned HTTP {resp.status_code}")
+
+            transient_retries = 0
 
             data = resp.json()
             results = data.get("results", [])
@@ -311,12 +322,14 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
             time.sleep(0.2)
 
         except requests.exceptions.Timeout:
+            transient_retries += 1
+            if transient_retries > 3:
+                raise RuntimeError("OpenAlex timed out after 3 retries")
             print("  Request timed out, retrying...")
             time.sleep(2)
             continue
         except Exception as e:
-            print(f"  Error fetching from OpenAlex: {e}")
-            break
+            raise RuntimeError(f"OpenAlex retrieval failed: {e}") from e
 
     print(f"  Total papers from OpenAlex: {len(papers)}")
     return papers
@@ -333,7 +346,7 @@ def load_seen_papers() -> set:
 
 
 def save_seen_papers(seen: set):
-    """Save the set of processed paper IDs with timestamps."""
+    """Merge and atomically save processed paper IDs with timestamps."""
     existing = {}
     if SEEN_PAPERS_FILE.exists():
         with open(SEEN_PAPERS_FILE, "r") as f:
@@ -344,8 +357,32 @@ def save_seen_papers(seen: set):
         if paper_id not in existing:
             existing[paper_id] = now
 
-    with open(SEEN_PAPERS_FILE, "w") as f:
-        json.dump(existing, f, indent=2)
+    SEEN_PAPERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{SEEN_PAPERS_FILE.name}.",
+        suffix=".tmp",
+        dir=SEEN_PAPERS_FILE.parent,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(existing, f, indent=2, sort_keys=True)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary_name, SEEN_PAPERS_FILE)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
+
+
+def mark_papers_seen(seen: set, papers: list[dict]) -> None:
+    """Commit successful papers to state only after the run outcome is durable."""
+    for paper in papers:
+        seen.add(get_paper_id(paper))
+        title_id = get_title_id(paper)
+        if title_id:
+            seen.add(title_id)
+    save_seen_papers(seen)
 
 
 def get_paper_id(entry: dict) -> str:
@@ -466,13 +503,9 @@ def get_llm_relevance_score(client: OpenAI, paper: dict) -> tuple[int, str]:
     Use GPT to score paper relevance 0-100.
     Returns (score, brief_reason).
     """
-    prompt = f"""Rate this paper's relevance (0-100) for a PhD student studying:
+    prompt = f"""Rate this paper's relevance (0-100) for this research profile:
 
-1. HIPPOCAMPAL / MTL REPRESENTATIONS: What does hippocampal/entorhinal/MTL activity represent - sensory features, or internal computations like task state, action plans, and goal-directed sequences?
-
-2. MULTISENSORY INTEGRATION: How does the brain (especially hippocampus/MTL) combine sensory cues to infer task state?
-
-3. STATE INFERENCE & BELIEF UPDATING: How does the brain infer hidden task states from sensory evidence?
+{RESEARCH_PROFILE}
 
 Paper title: {paper['title']}
 
@@ -517,12 +550,15 @@ DO NOT stretch or exaggerate relevance. If a paper is only tangentially related,
             if match:
                 result = json.loads(match.group())
             else:
-                return 0, "Failed to parse response"
+                raise RuntimeError("Failed to parse model response as JSON")
 
-        return int(result.get("score", 0)), result.get("reason", "")
+        score = int(result.get("score", -1))
+        reason = result.get("reason", "")
+        if not 0 <= score <= 100 or not isinstance(reason, str) or not reason.strip():
+            raise RuntimeError("Model response must contain score 0-100 and a non-empty reason")
+        return score, reason.strip()
     except Exception as e:
-        print(f"    LLM scoring error: {e}")
-        return 0, "Error during scoring"
+        raise RuntimeError(f"LLM scoring failed: {e}") from e
 
 
 def summarize_paper(client: OpenAI, paper: dict) -> str:
@@ -600,7 +636,7 @@ def fetch_papers_from_feed(journal_name: str, feed_url: str, cutoff_date: dateti
             })
 
     except Exception as e:
-        print(f"  Error fetching {journal_name}: {e}")
+        raise RuntimeError(f"RSS retrieval failed for {journal_name}: {e}") from e
 
     return papers
 
@@ -653,7 +689,7 @@ def format_email_html(papers: list[dict]) -> str:
         <div class="paper {relevance_class}">
             <h3>
                 <span class="score {score_class}">{combined}/100</span>
-                <a href="{paper['link']}">{title}</a>
+                <a href="{html_escape(str(paper['link']), quote=True)}">{title}</a>
             </h3>
             <div class="meta">
                 <strong>{journal}</strong> | {paper['date'].strftime('%Y-%m-%d')}
@@ -800,6 +836,11 @@ def _has_negative_domain_terms(title: str, abstract: str) -> bool:
     return any(t in text for t in NEGATIVE_DOMAIN_TERMS)
 
 
+def emit_run_summary(**values) -> None:
+    """Emit one machine-readable line for logs and alerting."""
+    print("RUN_SUMMARY " + json.dumps(values, sort_keys=True))
+
+
 def main(
     days_override: int = None,
     include_seen: bool = False,
@@ -812,6 +853,7 @@ def main(
     print(f"Neuroscience Paper Tracker - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
     use_openalex = historical or not use_rss
+    fetch_failures = []
     if use_openalex:
         print("MODE: OpenAlex search")
     else:
@@ -824,20 +866,23 @@ def main(
             cutoff_date = datetime.strptime(start_date, "%Y-%m-%d")
         except ValueError:
             print(f"Error: Invalid start date format '{start_date}'. Use YYYY-MM-DD.")
-            return
+            emit_run_summary(status="failed", stage="arguments", error="invalid_start_date")
+            return 2
 
         if end_date:
             try:
                 end_cutoff = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
             except ValueError:
                 print(f"Error: Invalid end date format '{end_date}'. Use YYYY-MM-DD.")
-                return
+                emit_run_summary(status="failed", stage="arguments", error="invalid_end_date")
+                return 2
         else:
             end_cutoff = None  # No end date filter (up to today)
 
         if end_cutoff and end_cutoff < cutoff_date:
             print("Error: End date cannot be before start date.")
-            return
+            emit_run_summary(status="failed", stage="arguments", error="reversed_date_range")
+            return 2
 
         date_range_str = f"{cutoff_date.strftime('%Y-%m-%d')} to {end_cutoff.strftime('%Y-%m-%d') if end_cutoff else 'today'}"
         print(f"Checking papers from {date_range_str}")
@@ -872,12 +917,22 @@ def main(
         # Use OpenAlex API for historical search
         start_str = cutoff_date.strftime("%Y-%m-%d")
         end_str = end_cutoff.strftime("%Y-%m-%d") if end_cutoff else datetime.now().strftime("%Y-%m-%d")
-        all_papers = fetch_papers_from_openalex(start_str, end_str)
+        try:
+            all_papers = fetch_papers_from_openalex(start_str, end_str)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}")
+            emit_run_summary(status="failed", stage="retrieval", error=str(exc))
+            return 1
     else:
         # Use RSS feeds (original behavior)
         for journal_name, feed_url in JOURNAL_FEEDS.items():
             print(f"Fetching: {journal_name}...")
-            papers = fetch_papers_from_feed(journal_name, feed_url, cutoff_date)
+            try:
+                papers = fetch_papers_from_feed(journal_name, feed_url, cutoff_date)
+            except RuntimeError as exc:
+                fetch_failures.append(journal_name)
+                print(f"  ERROR: {exc}")
+                continue
             print(f"  Found {len(papers)} recent papers")
             all_papers.extend(papers)
             time.sleep(0.3)
@@ -951,9 +1006,15 @@ def main(
     # Stage 3: LLM scoring
     print(f"\nStage 2: AI relevance scoring ({len(keyword_candidates)} papers)...")
     scored_papers = []
+    scoring_failures = []
     for i, paper in enumerate(keyword_candidates):
         print(f"  Scoring {i+1}/{len(keyword_candidates)}: {paper['title'][:50]}...")
-        llm_score, llm_reason = get_llm_relevance_score(client, paper)
+        try:
+            llm_score, llm_reason = get_llm_relevance_score(client, paper)
+        except RuntimeError as exc:
+            scoring_failures.append(paper)
+            print(f"    ERROR: {exc}")
+            continue
         paper['llm_score'] = llm_score
         paper['llm_reason'] = llm_reason
 
@@ -963,27 +1024,44 @@ def main(
         time.sleep(0.2)
 
     # Stage 4: Filter by combined score
-    relevant_papers = [p for p in scored_papers if p['combined_score'] >= MIN_COMBINED_SCORE]
-    relevant_papers.sort(key=lambda x: x['combined_score'], reverse=True)
+    relevant_candidates = [p for p in scored_papers if p['combined_score'] >= MIN_COMBINED_SCORE]
+    relevant_candidates.sort(key=lambda x: x['combined_score'], reverse=True)
+    relevant_papers = list(relevant_candidates)
 
-    print(f"\nPapers with combined score >= {MIN_COMBINED_SCORE}: {len(relevant_papers)}")
+    print(f"\nPapers with combined score >= {MIN_COMBINED_SCORE}: {len(relevant_candidates)}")
 
     # Limit to top N
     if len(relevant_papers) > MAX_PAPERS_PER_DIGEST:
         relevant_papers = relevant_papers[:MAX_PAPERS_PER_DIGEST]
         print(f"Limited to top {MAX_PAPERS_PER_DIGEST}")
 
-    # Mark as seen only after LLM scoring (track both link-based and title-based IDs)
-    for paper in scored_papers:
-        seen_papers.add(get_paper_id(paper))
-        title_id = get_title_id(paper)
-        if title_id:
-            seen_papers.add(title_id)
-    save_seen_papers(seen_papers)
+    # Low-scoring papers were fully processed and can be committed. Relevant
+    # papers beyond the email cap were not delivered, so leave them retryable.
+    committable_papers = [
+        paper for paper in scored_papers if paper['combined_score'] < MIN_COMBINED_SCORE
+    ] + relevant_papers
 
     if not relevant_papers:
         print("\nNo relevant papers found today. No email sent.")
-        return
+        if scored_papers:
+            mark_papers_seen(seen_papers, scored_papers)
+        status = (
+            "failed" if scoring_failures and not scored_papers
+            else "partial" if scoring_failures or fetch_failures
+            else "ok"
+        )
+        emit_run_summary(
+            status=status,
+            fetched=len(all_papers),
+            new=len(new_papers),
+            keyword_candidates=len(keyword_candidates),
+            scored=len(scored_papers),
+            scoring_failures=len(scoring_failures),
+            fetch_failures=len(fetch_failures),
+            delivered=0,
+            state_committed=len(scored_papers),
+        )
+        return 1 if status in {"failed", "partial"} else 0
 
     # Stage 5: Generate summaries with Sonnet
     print(f"\nStage 3: Generating summaries...")
@@ -1007,13 +1085,53 @@ def main(
         with open(backup_file, "w") as f:
             f.write(text_content)
         print(f"Digest saved to {backup_file}")
+        emit_run_summary(
+            status="failed",
+            stage="email",
+            fetched=len(all_papers),
+            scored=len(scored_papers),
+            scoring_failures=len(scoring_failures),
+            delivered=0,
+            state_committed=0,
+            backup=str(backup_file),
+        )
+        return 1
+
+    # Transaction boundary: only commit successfully scored papers after a
+    # relevant digest has been durably delivered. Failed scores remain retryable.
+    try:
+        mark_papers_seen(seen_papers, committable_papers)
+    except Exception as exc:
+        emit_run_summary(
+            status="failed",
+            stage="state_commit",
+            delivered=len(relevant_papers),
+            state_committed=0,
+            error=str(exc),
+        )
+        return 1
 
     print("\nDone!")
+    status = "partial" if scoring_failures or fetch_failures else "ok"
+    emit_run_summary(
+        status=status,
+        fetched=len(all_papers),
+        new=len(new_papers),
+        keyword_candidates=len(keyword_candidates),
+        scored=len(scored_papers),
+        scoring_failures=len(scoring_failures),
+        fetch_failures=len(fetch_failures),
+        delivered=len(relevant_papers),
+        state_committed=len(committable_papers),
+    )
+    return 1 if status == "partial" else 0
 
 
 if __name__ == "__main__":
+    import sys
+
     args = _parse_args()
-    main(
+    sys.exit(main(
         days_override=args.days,
         include_seen=args.include_seen,
         start_date=args.start_date,
@@ -1021,4 +1139,4 @@ if __name__ == "__main__":
         historical=args.historical,
         use_rss=args.rss,
         max_llm_candidates=args.max_llm_candidates,
-    )
+    ))
