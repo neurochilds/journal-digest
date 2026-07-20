@@ -34,6 +34,10 @@ You can [run the workflow manually](https://github.com/neurochilds/journal-diges
 
 The workflow will update `seen_papers.json` after each run and commit it back to the repo.
 
+State is committed only after successful scoring and, when a digest is produced,
+successful email delivery. A failed score remains eligible for a later retry. Writes
+to the state file are atomic and scheduled runs are serialized by workflow concurrency.
+
 ## Required Secrets
 Add these under **Settings → Secrets and variables → Actions**:
 - `OPENAI_API_KEY`
@@ -56,3 +60,29 @@ Then run:
 ```bash
 python paper_tracker.py --days 3
 ```
+
+### Share-safe research profiles
+
+To use a lab-specific profile without editing source code, copy
+`profile.example.json` to an untracked file such as `profile.local.json`, edit it,
+and set:
+
+```bash
+export PAPER_TRACKER_PROFILE=/absolute/path/to/profile.local.json
+```
+
+The override may contain a `research_profile`, `keywords`, or both. GitHub Actions
+can create the file from an encrypted secret before the tracker step. Never commit
+credentials or unpublished project details.
+
+### Tests and run status
+
+Run the deterministic suite with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Each tracker run ends with a `RUN_SUMMARY` JSON line. Failures in model scoring or
+email delivery are no longer reported as successful delivery, and failed papers are
+not consumed from the retry queue.

@@ -1,0 +1,12 @@
+{
+  "research_profile": "Describe the lab's scientific questions, preferred evidence, and explicit exclusions here.",
+  "keywords": {
+    "primary_topic": [
+      "example phrase",
+      "another phrase"
+    ],
+    "method_or_system": [
+      "example system"
+    ]
+  }
+}

@@ -3,7 +3,9 @@ Configuration for the neuroscience paper tracker.
 Edit these settings to customize the tracker.
 """
 
+import json
 import os
+from pathlib import Path
 
 # === EMAIL SETTINGS ===
 # Your Gmail address (sender)
@@ -16,12 +18,18 @@ GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 # Where to send the digest
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL", "")
 
-# === ANTHROPIC API (for summarization) ===
-# Get your API key from: https://console.anthropic.com/
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-
 # === OPENAI API ===
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+# === RESEARCH PROFILE ===
+# Keep lab- or person-specific settings outside the code. Set PAPER_TRACKER_PROFILE
+# to a JSON file shaped like profile.example.json. The checked-in defaults retain
+# the original tracker behaviour when no override is supplied.
+RESEARCH_PROFILE = """Researcher investigating what hippocampal firing represents, with emphasis on
+hippocampal and entorhinal representations, multisensory integration, latent task-state inference,
+goal-directed sequences, remapping, belief states, and cognitive-map theories. Prefer cognitive and
+systems neuroscience over technique-only, molecular, disease, or developmental papers."""
+PROFILE_PATH = os.getenv("PAPER_TRACKER_PROFILE", "")
 
 # === JOURNAL RSS FEEDS ===
 # These are the RSS/Atom feeds for major neuroscience journals
@@ -122,6 +130,41 @@ KEYWORDS = {
         "vector cell", "boundary vector", "border cell", "speed cell",
     ],
 }
+
+
+def _apply_profile_override() -> None:
+    """Load an optional share-safe JSON profile without requiring code edits."""
+    global RESEARCH_PROFILE, KEYWORDS
+    if not PROFILE_PATH:
+        return
+
+    path = Path(PROFILE_PATH).expanduser()
+    if not path.is_file():
+        raise RuntimeError(f"PAPER_TRACKER_PROFILE does not exist: {path}")
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise RuntimeError("PAPER_TRACKER_PROFILE must contain a JSON object")
+
+    profile = data.get("research_profile")
+    if profile is not None:
+        if not isinstance(profile, str) or not profile.strip():
+            raise RuntimeError("research_profile must be a non-empty string")
+        RESEARCH_PROFILE = profile.strip()
+
+    keywords = data.get("keywords")
+    if keywords is not None:
+        if not isinstance(keywords, dict) or not all(
+            isinstance(category, str)
+            and isinstance(terms, list)
+            and all(isinstance(term, str) and term.strip() for term in terms)
+            for category, terms in keywords.items()
+        ):
+            raise RuntimeError("keywords must map category names to non-empty string lists")
+        KEYWORDS = keywords
+
+
+_apply_profile_override()
 
 # === SCORING THRESHOLDS ===
 # Stage 1: Minimum raw keyword score to pass to LLM scoring (broader = more candidates)
