@@ -3,6 +3,8 @@ __pycache__/
 venv/
 .env
 config_local.py
+profile.local.json
+digest_*.txt
 tracker.log
 tracker_error.log
 CLAUDE_NOTES.txt
