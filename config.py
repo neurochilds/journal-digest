@@ -135,7 +135,12 @@ MIN_COMBINED_SCORE = 40
 # Hard floor on the AI relevance score. A paper the AI judges irrelevant is not
 # emailed no matter how many keywords its abstract happens to repeat - this is
 # what stops keyword-dense but off-topic papers padding the digest.
-MIN_LLM_SCORE = 40
+#
+# Raised 40 -> 50 after the Feb/Mar backfill. This is the threshold to tune for
+# digest size: it cuts on judged relevance, whereas raising MIN_COMBINED_SCORE
+# would penalise papers that simply have no abstract in OpenAlex (they are stuck
+# at a keyword score of ~20 however relevant they are).
+MIN_LLM_SCORE = 50
 
 # How many days back to check for papers.
 # The workflow runs Mon + Thu, but a 3-day window meant any paper OpenAlex
