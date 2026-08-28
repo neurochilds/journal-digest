@@ -19,6 +19,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from pathlib import Path
 import time
+import csv
 from urllib.parse import quote
 from html import escape as html_escape
 import argparse
@@ -28,11 +29,20 @@ from openai import OpenAI
 from config import (
     GMAIL_ADDRESS, GMAIL_APP_PASSWORD, RECIPIENT_EMAIL,
     OPENAI_API_KEY, JOURNAL_FEEDS, KEYWORDS,
-    MIN_KEYWORD_SCORE, MIN_COMBINED_SCORE, DAYS_TO_CHECK, MAX_PAPERS_PER_DIGEST
+    MIN_KEYWORD_SCORE, MIN_COMBINED_SCORE, MIN_LLM_SCORE, DAYS_TO_CHECK, MAX_PAPERS_PER_DIGEST,
+    MAX_LLM_CANDIDATES, KEYWORD_WEIGHT, SEEN_RETENTION_DAYS, CREATED_WINDOW_DAYS
 )
 
 # File to track which papers we've already processed
 SEEN_PAPERS_FILE = Path(__file__).parent / "seen_papers.json"
+
+# Permanent, human-readable record of every paper that reached AI scoring,
+# whether or not it made it into a digest email.
+DIGEST_LOG_FILE = Path(__file__).parent / "digest_log.csv"
+DIGEST_LOG_FIELDS = [
+    "run_date", "emailed", "title", "journal", "link", "publication_date",
+    "keyword_score", "llm_score", "combined_score", "llm_reason",
+]
 
 # Research profile for LLM scoring
 RESEARCH_PROFILE = """PhD student investigating what hippocampal firing actually represents.
@@ -187,7 +197,8 @@ def reconstruct_abstract_from_inverted_index(inv: dict) -> str:
     return ""
 
 
-def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: list[str] = None) -> list[dict]:
+def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: list[str] = None,
+                               date_field: str = "publication") -> list[dict]:
     """
     Fetch papers from OpenAlex API with proper date range support.
 
@@ -224,18 +235,25 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
     # Pagination - OpenAlex returns max 200 per page
     cursor = "*"
     page_count = 0
-    max_pages = 25  # Safety limit (25 * 200 = 5000 papers max)
+    max_pages = 60  # Safety limit (60 * 200 = 12000 papers max)
 
-    print(f"  Searching OpenAlex for neuroscience papers...")
+    # "publication" = the publisher's stated date. "created" = the date OpenAlex
+    # indexed the record, which is what catches papers deposited late.
+    if date_field == "created":
+        date_filter = f"from_created_date:{start_date},to_created_date:{end_date}"
+    else:
+        date_filter = f"from_publication_date:{start_date},to_publication_date:{end_date}"
+
+    print(f"  Searching OpenAlex for neuroscience papers (by {date_field} date)...")
     print(f"  Date range: {start_date} to {end_date}")
 
     while cursor and page_count < max_pages:
         params = {
-            "filter": f"concepts.id:{neuroscience_concept},from_publication_date:{start_date},to_publication_date:{end_date}",
+            "filter": f"concepts.id:{neuroscience_concept},{date_filter}",
             "search": search_query,
             "select": "id,doi,title,abstract_inverted_index,publication_date,primary_location,authorships",
             "sort": "publication_date:desc",
-            "per_page": 200,
+            "per-page": 200,
             "cursor": cursor,
         }
 
@@ -318,6 +336,8 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
             print(f"  Error fetching from OpenAlex: {e}")
             break
 
+    if page_count >= max_pages:
+        print(f"  WARNING: hit the {max_pages}-page safety limit - part of this window was not fetched.")
     print(f"  Total papers from OpenAlex: {len(papers)}")
     return papers
 
@@ -327,7 +347,7 @@ def load_seen_papers() -> set:
     if SEEN_PAPERS_FILE.exists():
         with open(SEEN_PAPERS_FILE, "r") as f:
             data = json.load(f)
-            cutoff = (datetime.now() - timedelta(days=30)).isoformat()
+            cutoff = (datetime.now() - timedelta(days=SEEN_RETENTION_DAYS)).isoformat()
             return {k for k, v in data.items() if v > cutoff}
     return set()
 
@@ -344,8 +364,40 @@ def save_seen_papers(seen: set):
         if paper_id not in existing:
             existing[paper_id] = now
 
+    # Prune entries older than the retention window. They no longer suppress
+    # anything on load, so keeping them just grows the file forever.
+    prune_before = (datetime.now() - timedelta(days=SEEN_RETENTION_DAYS)).isoformat()
+    existing = {k: v for k, v in existing.items() if v > prune_before}
+
     with open(SEEN_PAPERS_FILE, "w") as f:
         json.dump(existing, f, indent=2)
+
+
+def append_digest_log(scored_papers: list[dict], emailed_ids: set):
+    """Append one row per AI-scored paper to the permanent digest log."""
+    if not scored_papers:
+        return
+    run_date = datetime.now().strftime("%Y-%m-%d %H:%M")
+    is_new = not DIGEST_LOG_FILE.exists()
+    with open(DIGEST_LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=DIGEST_LOG_FIELDS)
+        if is_new:
+            writer.writeheader()
+        for paper in sorted(scored_papers, key=lambda x: x.get("combined_score", 0), reverse=True):
+            pub = paper.get("date")
+            writer.writerow({
+                "run_date": run_date,
+                "emailed": "yes" if get_paper_id(paper) in emailed_ids else "no",
+                "title": paper.get("title", ""),
+                "journal": paper.get("journal", ""),
+                "link": paper.get("link", ""),
+                "publication_date": pub.strftime("%Y-%m-%d") if isinstance(pub, datetime) else "",
+                "keyword_score": paper.get("keyword_score", ""),
+                "llm_score": paper.get("llm_score", ""),
+                "combined_score": paper.get("combined_score", ""),
+                "llm_reason": (paper.get("llm_reason", "") or "")[:300],
+            })
+    print(f"Logged {len(scored_papers)} scored papers to {DIGEST_LOG_FILE.name}")
 
 
 def get_paper_id(entry: dict) -> str:
@@ -759,7 +811,12 @@ def _parse_args() -> argparse.Namespace:
         "--max-llm-candidates",
         type=int,
         default=None,
-        help="Max number of papers to send for AI scoring (default: 40).",
+        help=f"Max number of papers to send for AI scoring (default: {MAX_LLM_CANDIDATES}).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Score and log everything, but do not send the email.",
     )
     return parser.parse_args()
 
@@ -796,8 +853,33 @@ def _has_neuro_anchor(title: str, abstract: str) -> bool:
 
 
 def _has_negative_domain_terms(title: str, abstract: str) -> bool:
-    text = f"{title} {abstract}".lower()
-    return any(t in text for t in NEGATIVE_DOMAIN_TERMS)
+    """Hard exclusion, judged on the TITLE only.
+
+    This used to scan the abstract too, which silently binned any rodent
+    electrophysiology paper whose methods mentioned a viral vector, or any study
+    motivated by a sentence about epilepsy or stroke. A paper is only off-topic
+    if its title says so.
+    """
+    return any(t in title.lower() for t in NEGATIVE_DOMAIN_TERMS)
+
+
+# Core terms that, when they appear in a TITLE, guarantee a paper is put in
+# front of the AI scorer regardless of how keyword-dense its abstract is.
+PRIORITY_TITLE_TERMS = [
+    r"hippocamp\w*", r"entorhinal", r"subicul\w*", r"dentate gyrus",
+    r"ca1", r"ca3", r"place cell\w*", r"place field\w*", r"grid cell\w*",
+    r"time cell\w*", r"theta", r"replay", r"sharp[- ]wave", r"ripple\w*",
+    r"remapping", r"cognitive map\w*", r"successor representation\w*",
+    r"path integration", r"spatial memory", r"allocentric",
+    r"head[- ]direction", r"boundary vector", r"multisensory", r"audiovisual",
+    r"state inference", r"belief state\w*", r"task state\w*",
+    r"prospective coding", r"theta sweep\w*",
+]
+_PRIORITY_TITLE_RE = re.compile(r"\b(" + "|".join(PRIORITY_TITLE_TERMS) + r")\b", re.I)
+
+
+def _has_priority_title(title: str) -> bool:
+    return bool(_PRIORITY_TITLE_RE.search(title or ""))
 
 
 def main(
@@ -808,6 +890,7 @@ def main(
     historical: bool = False,
     use_rss: bool = False,
     max_llm_candidates: int = None,
+    dry_run: bool = False,
 ):
     print(f"Neuroscience Paper Tracker - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
@@ -873,6 +956,19 @@ def main(
         start_str = cutoff_date.strftime("%Y-%m-%d")
         end_str = end_cutoff.strftime("%Y-%m-%d") if end_cutoff else datetime.now().strftime("%Y-%m-%d")
         all_papers = fetch_papers_from_openalex(start_str, end_str)
+
+        # Second pass by OpenAlex index date. Publishers deposit records days or
+        # weeks after the stated publication date, so a publication-date window
+        # alone permanently loses anything indexed late. Skipped for explicit
+        # backfills, where the publication window is exactly what is wanted.
+        if not start_date:
+            created_start = (datetime.now() - timedelta(days=CREATED_WINDOW_DAYS)).strftime("%Y-%m-%d")
+            created_end = datetime.now().strftime("%Y-%m-%d")
+            print()
+            by_created = fetch_papers_from_openalex(created_start, created_end, date_field="created")
+            before = len(all_papers)
+            all_papers.extend(by_created)
+            print(f"  Index-date pass contributed {len(all_papers) - before} records (deduped below)")
     else:
         # Use RSS feeds (original behavior)
         for journal_name, feed_url in JOURNAL_FEEDS.items():
@@ -887,6 +983,14 @@ def main(
             all_papers = [p for p in all_papers if p['date'] <= end_cutoff]
 
     print(f"\nTotal papers fetched: {len(all_papers)}")
+
+    # A run that fetches nothing is a failure, not a quiet day. This previously
+    # returned successfully and the papers in that window were lost for good.
+    if not all_papers:
+        raise SystemExit(
+            "FATAL: fetched 0 papers. The source query failed or returned nothing, "
+            "so this run would silently skip its entire date window."
+        )
 
     # Dedupe by normalized title (+ year) to avoid duplicates across feeds
     deduped_papers = _dedupe_papers_by_title(all_papers)
@@ -926,14 +1030,28 @@ def main(
 
     print(f"\nPapers passing keyword filter (>= {MIN_KEYWORD_SCORE}) + neuro-anchor: {len(keyword_candidates)}")
 
-    # Limit to top N by keyword score to avoid excessive LLM API usage
-    llm_cap = max_llm_candidates if max_llm_candidates is not None else 40
+    # Bound LLM cost. Papers with a core term in the TITLE are ranked ahead of
+    # keyword-dense abstracts: sorting on the raw count alone pushed titles like
+    # "Hippocampal theta sweeps indicate goal direction" (raw=20) below papers
+    # that merely repeated hippocampal vocabulary, and everything past the cut
+    # was discarded permanently without ever being scored.
+    llm_cap = max_llm_candidates if max_llm_candidates is not None else MAX_LLM_CANDIDATES
     if llm_cap < 1:
         llm_cap = 1
+    keyword_candidates.sort(
+        key=lambda x: (_has_priority_title(x['title']), x['keyword_score_raw']),
+        reverse=True,
+    )
     if len(keyword_candidates) > llm_cap:
-        keyword_candidates.sort(key=lambda x: x['keyword_score_raw'], reverse=True)
+        dropped = keyword_candidates[llm_cap:]
         keyword_candidates = keyword_candidates[:llm_cap]
-        print(f"Limited to top {llm_cap} by keyword score for LLM scoring")
+        print(f"\nWARNING: {len(dropped)} candidates exceeded the LLM cap of {llm_cap} and were dropped.")
+        print("         Raise --max-llm-candidates if relevant papers are being lost.")
+        print("         Highest-scoring dropped papers:")
+        for paper in dropped[:5]:
+            print(f"           - (raw={paper['keyword_score_raw']}) {paper['title'][:80]}")
+    else:
+        print(f"\nAll {len(keyword_candidates)} candidates fit inside the LLM cap of {llm_cap}.")
 
     # Fetch missing abstracts from Semantic Scholar (only for papers that passed keyword filter)
     papers_needing_abstract = [p for p in keyword_candidates if not p.get('abstract')]
@@ -957,16 +1075,30 @@ def main(
         paper['llm_score'] = llm_score
         paper['llm_reason'] = llm_reason
 
-        # Combine Score
-        paper['combined_score'] = (paper['keyword_score'] + llm_score) // 2
+        # Combine scores. The AI judgement is weighted above the keyword count,
+        # which rewards long keyword-dense abstracts rather than relevance and
+        # penalises short, precise titles with no abstract in OpenAlex.
+        paper['combined_score'] = round(
+            KEYWORD_WEIGHT * paper['keyword_score'] + (1 - KEYWORD_WEIGHT) * llm_score
+        )
         scored_papers.append(paper)
         time.sleep(0.2)
 
-    # Stage 4: Filter by combined score
-    relevant_papers = [p for p in scored_papers if p['combined_score'] >= MIN_COMBINED_SCORE]
+    # Stage 4: Filter by combined score, with a hard floor on the AI score so
+    # that keyword-dense but off-topic papers cannot pad the digest.
+    relevant_papers = [
+        p for p in scored_papers
+        if p['combined_score'] >= MIN_COMBINED_SCORE and p['llm_score'] >= MIN_LLM_SCORE
+    ]
     relevant_papers.sort(key=lambda x: x['combined_score'], reverse=True)
 
-    print(f"\nPapers with combined score >= {MIN_COMBINED_SCORE}: {len(relevant_papers)}")
+    rejected_by_llm = sum(
+        1 for p in scored_papers
+        if p['combined_score'] >= MIN_COMBINED_SCORE and p['llm_score'] < MIN_LLM_SCORE
+    )
+    print(f"\nPapers with combined score >= {MIN_COMBINED_SCORE} and AI score >= {MIN_LLM_SCORE}: {len(relevant_papers)}")
+    if rejected_by_llm:
+        print(f"  ({rejected_by_llm} passed on combined score but were rejected by the AI floor)")
 
     # Limit to top N
     if len(relevant_papers) > MAX_PAPERS_PER_DIGEST:
@@ -983,6 +1115,7 @@ def main(
 
     if not relevant_papers:
         print("\nNo relevant papers found today. No email sent.")
+        append_digest_log(scored_papers, set())
         return
 
     # Stage 5: Generate summaries with Sonnet
@@ -993,20 +1126,29 @@ def main(
         time.sleep(0.3)
 
     # Send email
-    print("\nSending email...")
+    print("\nSending email..." if not dry_run else "\nDry run - skipping email.")
     subject = f"Neuro Papers: {len(relevant_papers)} found - {datetime.now().strftime('%b %d')}"
     html_content = format_email_html(relevant_papers)
     text_content = format_email_text(relevant_papers)
 
-    try:
-        send_email(subject, html_content, text_content)
-        print(f"Email sent successfully to {RECIPIENT_EMAIL}")
-    except Exception as e:
-        print(f"Error sending email: {e}")
-        backup_file = Path(__file__).parent / f"digest_{datetime.now().strftime('%Y%m%d')}.txt"
-        with open(backup_file, "w") as f:
-            f.write(text_content)
-        print(f"Digest saved to {backup_file}")
+    emailed_ids = set()
+    if dry_run:
+        print("DRY RUN - no email sent. Papers that would have been sent:")
+        for paper in relevant_papers:
+            print(f"  [{paper['combined_score']:3d}] {paper['title'][:80]}")
+    else:
+        try:
+            send_email(subject, html_content, text_content)
+            emailed_ids = {get_paper_id(paper) for paper in relevant_papers}
+            print(f"Email sent successfully to {RECIPIENT_EMAIL}")
+        except Exception as e:
+            print(f"Error sending email: {e}")
+            backup_file = Path(__file__).parent / f"digest_{datetime.now().strftime('%Y%m%d')}.txt"
+            with open(backup_file, "w") as f:
+                f.write(text_content)
+            print(f"Digest saved to {backup_file}")
+
+    append_digest_log(scored_papers, emailed_ids)
 
     print("\nDone!")
 
@@ -1021,4 +1163,5 @@ if __name__ == "__main__":
         historical=args.historical,
         use_rss=args.rss,
         max_llm_candidates=args.max_llm_candidates,
+        dry_run=args.dry_run,
     )
