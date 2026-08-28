@@ -882,6 +882,22 @@ def _has_priority_title(title: str) -> bool:
     return bool(_PRIORITY_TITLE_RE.search(title or ""))
 
 
+# eLife (and some repositories) deposit peer-review material into OpenAlex as
+# separate works. They carry the paper's own title, so they score like the paper
+# and crowd it out of the digest - the Feb 2026 backfill wasted 4 of its 20
+# slots on "Reviewer #1 (Public review): ..." records.
+NON_PAPER_TITLE_RE = re.compile(
+    r"^\s*(reviewer\s*#|author response|editor'?s?\s+(assessment|evaluation)|"
+    r"elife assessment|decision letter|peer review report)|\(public review\)",
+    re.I,
+)
+
+
+def _is_non_paper(title: str) -> bool:
+    """True for peer-review artefacts masquerading as papers."""
+    return bool(NON_PAPER_TITLE_RE.search(title or ""))
+
+
 def main(
     days_override: int = None,
     include_seen: bool = False,
@@ -1014,6 +1030,10 @@ def main(
     for paper in new_papers:
         # Hard exclude obvious non-neuro domains before any scoring.
         if _has_negative_domain_terms(paper.get('title', ''), paper.get('abstract', '')):
+            continue
+
+        # Drop peer-review records, author responses and editorial assessments.
+        if _is_non_paper(paper.get('title', '')):
             continue
 
         raw_score, matched = calculate_keyword_score(paper['title'], paper['abstract'])
