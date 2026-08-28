@@ -128,15 +128,40 @@ KEYWORDS = {
 # Note: Single "spatial" match = 6, so 12+ requires multiple keyword hits
 MIN_KEYWORD_SCORE = 12
 
-# Stage 2: Minimum combined score (keyword + LLM average) to include in email
-# Papers below this won't be emailed even if they passed keyword filter
+# Stage 2: Minimum combined score to include in email.
+# Papers below this won't be emailed even if they passed the keyword filter.
 MIN_COMBINED_SCORE = 40
 
-# How many days back to check for papers
-DAYS_TO_CHECK = 3
+# Hard floor on the AI relevance score. A paper the AI judges irrelevant is not
+# emailed no matter how many keywords its abstract happens to repeat - this is
+# what stops keyword-dense but off-topic papers padding the digest.
+MIN_LLM_SCORE = 40
+
+# How many days back to check for papers.
+# The workflow runs Mon + Thu, but a 3-day window meant any paper OpenAlex
+# indexed late, or any run GitHub skipped, was lost permanently. A wide window
+# is safe because seen_papers.json is what prevents repeats, not the window.
+DAYS_TO_CHECK = 14
+
+# Days back to also sweep by OpenAlex *index* date, catching papers whose
+# publication date falls outside the window above but were only deposited now.
+CREATED_WINDOW_DAYS = 21
 
 # Maximum papers to include in digest (to avoid overwhelming emails)
 MAX_PAPERS_PER_DIGEST = 20
+
+# Maximum papers sent for AI scoring per run. This is a cost ceiling, not a
+# relevance filter. It was 40 and saturated on nearly every run since February,
+# silently discarding everything below the cut.
+MAX_LLM_CANDIDATES = 200
+
+# Weight of the keyword score in the final combined score; the remainder goes to
+# the AI relevance score. The raw keyword count rewards long keyword-dense
+# abstracts, so it gets the smaller share.
+KEYWORD_WEIGHT = 0.3
+
+# How long a paper stays suppressed as "already seen".
+SEEN_RETENTION_DAYS = 365
 
 # Optional local overrides for desktop usage (kept out of git)
 try:

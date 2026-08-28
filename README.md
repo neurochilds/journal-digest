@@ -21,7 +21,8 @@ You can [run the workflow manually](https://github.com/neurochilds/journal-diges
 - `historical`: Set to `true` to use the OpenAlex search (default). Set to `false` to use RSS feeds.
 - `start_date`: Start date in `YYYY-MM-DD` (overrides `days`).
 - `end_date`: End date in `YYYY-MM-DD` (optional).
-- `max_llm_candidates`: Max papers to send for AI scoring (default 40).
+- `max_llm_candidates`: Max papers to send for AI scoring (default 200).
+- `dry_run`: Set to `true` to score and log everything without sending the email.
 
 **Examples**
 - Look back 7 days:
@@ -32,7 +33,26 @@ You can [run the workflow manually](https://github.com/neurochilds/journal-diges
   - `end_date: 2026-01-15`
   - `historical: true`
 
-The workflow will update `seen_papers.json` after each run and commit it back to the repo.
+The workflow updates `seen_papers.json` and `digest_log.csv` after each run and commits them back to the repo.
+
+## What Gets Logged
+
+`digest_log.csv` is the permanent record: one row per paper that reached AI scoring, with the run date, title, journal, link, publication date, keyword score, AI score, combined score, whether it was emailed, and the AI's one-line reason. `seen_papers.json` is only a dedup index of opaque hashes - use the CSV to see what actually happened.
+
+## Tuning (config.py)
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `DAYS_TO_CHECK` | 14 | Publication-date lookback window |
+| `CREATED_WINDOW_DAYS` | 21 | Additional sweep by OpenAlex *index* date, catching late deposits |
+| `MAX_LLM_CANDIDATES` | 200 | Cost ceiling on AI scoring. Truncation is now logged loudly |
+| `MIN_KEYWORD_SCORE` | 12 | Raw keyword score needed to become a candidate |
+| `MIN_LLM_SCORE` | 40 | Hard floor - the AI can veto a keyword-dense paper |
+| `MIN_COMBINED_SCORE` | 40 | Final threshold on the weighted score |
+| `KEYWORD_WEIGHT` | 0.3 | Keyword share of the combined score; AI gets the rest |
+| `SEEN_RETENTION_DAYS` | 365 | How long a paper stays suppressed as already seen |
+
+A paper with a core term in its **title** (hippocampal, entorhinal, theta, replay, remapping, multisensory, ...) is always ranked ahead of keyword-dense abstracts when the candidate cap bites.
 
 ## Required Secrets
 Add these under **Settings → Secrets and variables → Actions**:

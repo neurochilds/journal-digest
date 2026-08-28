@@ -27,9 +27,13 @@ on:
         required: false
         default: ""
       max_llm_candidates:
-        description: "Max papers to send for AI scoring (default 40)"
+        description: "Max papers to send for AI scoring (default 200)"
         required: false
         default: ""
+      dry_run:
+        description: "Score and log everything but do not send the email (true/false)"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
@@ -69,16 +73,19 @@ jobs:
           if [ -n "${{ inputs.start_date }}" ]; then args+=("--start-date" "${{ inputs.start_date }}"); fi
           if [ -n "${{ inputs.end_date }}" ]; then args+=("--end-date" "${{ inputs.end_date }}"); fi
           if [ -n "${{ inputs.max_llm_candidates }}" ]; then args+=("--max-llm-candidates" "${{ inputs.max_llm_candidates }}"); fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then args+=("--dry-run"); fi
           python paper_tracker.py "${args[@]}"
 
-      - name: Commit seen papers
+      - name: Commit seen papers and digest log
+        if: always()
         run: |
-          if git status --porcelain | grep -q "seen_papers.json"; then
+          if git status --porcelain | grep -qE "seen_papers.json|digest_log.csv"; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add seen_papers.json
-            git commit -m "Update seen papers"
+            git add seen_papers.json digest_log.csv
+            git commit -m "Update seen papers and digest log"
+            git pull --rebase --autostash
             git push
           else
-            echo "No changes to seen_papers.json"
+            echo "No changes to commit"
           fi
