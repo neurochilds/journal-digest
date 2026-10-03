@@ -23,18 +23,24 @@ import csv
 from urllib.parse import quote
 from html import escape as html_escape
 import argparse
+import os
+import sys
+import tempfile
 
 from openai import OpenAI
+from openalex_client import get_json as openalex_get_json, FETCH_BUDGET_SECONDS
 
 from config import (
     GMAIL_ADDRESS, GMAIL_APP_PASSWORD, RECIPIENT_EMAIL,
     OPENAI_API_KEY, JOURNAL_FEEDS, KEYWORDS,
     MIN_KEYWORD_SCORE, MIN_COMBINED_SCORE, MIN_LLM_SCORE, DAYS_TO_CHECK, MAX_PAPERS_PER_DIGEST,
-    MAX_LLM_CANDIDATES, KEYWORD_WEIGHT, SEEN_RETENTION_DAYS, CREATED_WINDOW_DAYS
+    MAX_LLM_CANDIDATES, KEYWORD_WEIGHT, SEEN_RETENTION_DAYS, PUBLICATION_OVERLAP_DAYS
 )
 
 # File to track which papers we've already processed
 SEEN_PAPERS_FILE = Path(__file__).parent / "seen_papers.json"
+FIRST_OBSERVED_FILE = Path(__file__).parent / "first_observed.json"
+PENDING_PAPERS_FILE = Path(__file__).parent / "pending_papers.json"
 
 # Permanent, human-readable record of every paper that reached AI scoring,
 # whether or not it made it into a digest email.
@@ -142,10 +148,8 @@ def fetch_abstract_from_openalex(doi: str) -> str:
     try:
         doi_url = f"https://doi.org/{doi}" if not doi.startswith("http") else doi
         url = f"https://api.openalex.org/works/{quote(doi_url, safe=':/')}"
-        headers = {"User-Agent": "NeuroTracker/1.0 (academic research tool)"}
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
+        data = openalex_get_json(url)
+        if data:
             # OpenAlex uses inverted index for abstracts
             inv = data.get("abstract_inverted_index")
             if isinstance(inv, dict) and inv:
@@ -211,7 +215,7 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
         List of paper dicts with title, abstract, link, journal, date, authors
     """
     papers = []
-    headers = {"User-Agent": "NeuroTracker/1.0 (academic research tool; mailto:quotientscience21@gmail.com)"}
+    deadline = time.monotonic() + FETCH_BUDGET_SECONDS
 
     # OpenAlex concept IDs for neuroscience-related topics
     # C169760540 = Neuroscience (verified from OpenAlex API)
@@ -232,49 +236,48 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
 
     base_url = "https://api.openalex.org/works"
 
-    # Pagination - OpenAlex returns max 200 per page
+    # Use the currently documented 100-result page size.
     cursor = "*"
     page_count = 0
-    max_pages = 60  # Safety limit (60 * 200 = 12000 papers max)
+    max_pages = 120  # 120 * 100 = 12000 papers; incomplete windows fail closed.
+    visited_cursors = set()
 
-    # "publication" = the publisher's stated date. "created" = the date OpenAlex
-    # indexed the record, which is what catches papers deposited late.
+    # Created-date filtering remains available to callers with a paid plan.
     if date_field == "created":
         date_filter = f"from_created_date:{start_date},to_created_date:{end_date}"
-    else:
+    elif date_field == "publication":
         date_filter = f"from_publication_date:{start_date},to_publication_date:{end_date}"
+    else:
+        raise ValueError("date_field must be publication or created")
 
     print(f"  Searching OpenAlex for neuroscience papers (by {date_field} date)...")
     print(f"  Date range: {start_date} to {end_date}")
 
     while cursor and page_count < max_pages:
+        if cursor in visited_cursors:
+            raise RuntimeError("OpenAlex repeated a pagination cursor; retrieval incomplete")
+        visited_cursors.add(cursor)
         params = {
             "filter": f"concepts.id:{neuroscience_concept},{date_filter}",
             "search": search_query,
             "select": "id,doi,title,abstract_inverted_index,publication_date,primary_location,authorships",
             "sort": "publication_date:desc",
-            "per-page": 200,
+            "per-page": 100,
             "cursor": cursor,
         }
 
-        try:
-            resp = requests.get(base_url, params=params, headers=headers, timeout=30)
+        data = openalex_get_json(base_url, params=params, deadline=deadline)
+        results = data.get("results")
+        meta = data.get("meta")
+        if not isinstance(results, list) or not isinstance(meta, dict) or "next_cursor" not in meta:
+            raise RuntimeError("OpenAlex pagination response is incomplete")
+        if not results:
+            if meta["next_cursor"]:
+                raise RuntimeError("OpenAlex returned an empty page with more results pending")
+            cursor = None
+            break
 
-            if resp.status_code == 429:
-                print("  Rate limited, waiting 5 seconds...")
-                time.sleep(5)
-                continue
-
-            if resp.status_code != 200:
-                print(f"  OpenAlex error: {resp.status_code}")
-                break
-
-            data = resp.json()
-            results = data.get("results", [])
-
-            if not results:
-                break
-
+        if results:
             for work in results:
                 # Extract journal name
                 journal = "Unknown"
@@ -310,6 +313,7 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
                 link = doi if doi else f"https://openalex.org/works/{work.get('id', '').split('/')[-1]}"
 
                 papers.append({
+                    "openalex_id": work.get("id", ""),
                     "title": work.get("title", "No title"),
                     "link": link,
                     "abstract": abstract,
@@ -319,8 +323,7 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
                 })
 
             # Get next cursor for pagination
-            meta = data.get("meta", {})
-            cursor = meta.get("next_cursor")
+            cursor = meta["next_cursor"]
             page_count += 1
 
             print(f"  Fetched page {page_count}: {len(results)} papers (total so far: {len(papers)})")
@@ -328,16 +331,8 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
             # Small delay to be nice to the API
             time.sleep(0.2)
 
-        except requests.exceptions.Timeout:
-            print("  Request timed out, retrying...")
-            time.sleep(2)
-            continue
-        except Exception as e:
-            print(f"  Error fetching from OpenAlex: {e}")
-            break
-
-    if page_count >= max_pages:
-        print(f"  WARNING: hit the {max_pages}-page safety limit - part of this window was not fetched.")
+    if cursor:
+        raise RuntimeError(f"OpenAlex hit the {max_pages}-page limit; retrieval incomplete")
     print(f"  Total papers from OpenAlex: {len(papers)}")
     return papers
 
@@ -369,8 +364,52 @@ def save_seen_papers(seen: set):
     prune_before = (datetime.now() - timedelta(days=SEEN_RETENTION_DAYS)).isoformat()
     existing = {k: v for k, v in existing.items() if v > prune_before}
 
-    with open(SEEN_PAPERS_FILE, "w") as f:
-        json.dump(existing, f, indent=2)
+    _save_json(SEEN_PAPERS_FILE, existing)
+
+
+def _save_json(path: Path, data):
+    """Replace one state file atomically, keeping the previous file on failure."""
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def mark_papers_seen(seen: set, papers: list[dict]):
+    for paper in papers:
+        seen.add(get_paper_id(paper))
+        title_id = get_title_id(paper)
+        if title_id:
+            seen.add(title_id)
+    save_seen_papers(seen)
+
+
+def record_first_observed(papers: list[dict]):
+    observed = json.loads(FIRST_OBSERVED_FILE.read_text()) if FIRST_OBSERVED_FILE.exists() else {}
+    now = datetime.now().isoformat()
+    for paper in papers:
+        observed.setdefault(paper.get("openalex_id") or get_paper_id(paper), now)
+    _save_json(FIRST_OBSERVED_FILE, observed)
+
+
+def load_pending_papers() -> list[dict]:
+    if not PENDING_PAPERS_FILE.exists():
+        return []
+    papers = json.loads(PENDING_PAPERS_FILE.read_text())
+    for paper in papers:
+        paper["date"] = datetime.fromisoformat(paper["date"])
+    return papers
+
+
+def save_pending_papers(papers: list[dict]):
+    _save_json(PENDING_PAPERS_FILE, [dict(p, date=p["date"].isoformat()) for p in papers])
 
 
 def append_digest_log(scored_papers: list[dict], emailed_ids: set):
@@ -569,12 +608,15 @@ DO NOT stretch or exaggerate relevance. If a paper is only tangentially related,
             if match:
                 result = json.loads(match.group())
             else:
-                return 0, "Failed to parse response"
+                raise RuntimeError("AI response did not contain a JSON score")
 
-        return int(result.get("score", 0)), result.get("reason", "")
+        score = int(result["score"])
+        reason = result["reason"]
+        if not 0 <= score <= 100 or not isinstance(reason, str) or not reason.strip():
+            raise ValueError("Invalid AI score/reason")
+        return score, reason.strip()
     except Exception as e:
-        print(f"    LLM scoring error: {e}")
-        return 0, "Error during scoring"
+        raise RuntimeError(f"AI scoring failed ({type(e).__name__}); papers remain retryable") from None
 
 
 def summarize_paper(client: OpenAI, paper: dict) -> str:
@@ -601,7 +643,7 @@ Summary:"""
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"[Summary unavailable: {e}]"
+        return f"[Summary unavailable ({type(e).__name__})]"
 
 
 def fetch_papers_from_feed(journal_name: str, feed_url: str, cutoff_date: datetime) -> list[dict]:
@@ -816,8 +858,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Score and log everything, but do not send the email.",
+        help="Score and preview without sending email or changing persistent state/logs.",
     )
+    parser.add_argument("--fetch-only", action="store_true", help="Retrieve and keyword-rank only; no AI calls, email or persistent state changes.")
+    parser.add_argument("--preview-file", type=Path, help="Write an HTML preview to this file.")
     return parser.parse_args()
 
 
@@ -907,7 +951,10 @@ def main(
     use_rss: bool = False,
     max_llm_candidates: int = None,
     dry_run: bool = False,
+    fetch_only: bool = False,
+    preview_file: Path = None,
 ):
+    dry_run = dry_run or fetch_only
     print(f"Neuroscience Paper Tracker - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print("=" * 60)
     use_openalex = historical or not use_rss
@@ -923,42 +970,48 @@ def main(
             cutoff_date = datetime.strptime(start_date, "%Y-%m-%d")
         except ValueError:
             print(f"Error: Invalid start date format '{start_date}'. Use YYYY-MM-DD.")
-            return
+            return 2
 
         if end_date:
             try:
                 end_cutoff = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
             except ValueError:
                 print(f"Error: Invalid end date format '{end_date}'. Use YYYY-MM-DD.")
-                return
+                return 2
         else:
             end_cutoff = None  # No end date filter (up to today)
 
         if end_cutoff and end_cutoff < cutoff_date:
             print("Error: End date cannot be before start date.")
-            return
+            return 2
 
         date_range_str = f"{cutoff_date.strftime('%Y-%m-%d')} to {end_cutoff.strftime('%Y-%m-%d') if end_cutoff else 'today'}"
         print(f"Checking papers from {date_range_str}")
     else:
         # Days mode (original behavior)
-        days_to_check = days_override if days_override else DAYS_TO_CHECK
+        days_to_check = days_override if days_override is not None else DAYS_TO_CHECK
         # Cap for safety
         if days_to_check < 1:
             days_to_check = 1
         if days_to_check > 90:
             days_to_check = 90
 
+        if use_openalex and days_override is None:
+            days_to_check = max(days_to_check, PUBLICATION_OVERLAP_DAYS)
+            print(f"Using a {days_to_check}-day publication overlap for late indexing; paid created-date filters are disabled.")
+
         cutoff_date = datetime.now() - timedelta(days=days_to_check)
         end_cutoff = None
         print(f"Checking papers from {cutoff_date.strftime('%Y-%m-%d')} onwards ({days_to_check} days)")
 
-    _require_setting("OPENAI_API_KEY", OPENAI_API_KEY)
-    _require_setting("GMAIL_ADDRESS", GMAIL_ADDRESS)
-    _require_setting("GMAIL_APP_PASSWORD", GMAIL_APP_PASSWORD)
-    _require_setting("RECIPIENT_EMAIL", RECIPIENT_EMAIL)
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = None
+    if not fetch_only:
+        _require_setting("OPENAI_API_KEY", OPENAI_API_KEY)
+        client = OpenAI(api_key=OPENAI_API_KEY)
+    if not dry_run:
+        _require_setting("GMAIL_ADDRESS", GMAIL_ADDRESS)
+        _require_setting("GMAIL_APP_PASSWORD", GMAIL_APP_PASSWORD)
+        _require_setting("RECIPIENT_EMAIL", RECIPIENT_EMAIL)
     seen_papers = load_seen_papers() if not include_seen else set()
     if include_seen:
         print("Including ALL papers (ignoring previously seen)")
@@ -973,18 +1026,6 @@ def main(
         end_str = end_cutoff.strftime("%Y-%m-%d") if end_cutoff else datetime.now().strftime("%Y-%m-%d")
         all_papers = fetch_papers_from_openalex(start_str, end_str)
 
-        # Second pass by OpenAlex index date. Publishers deposit records days or
-        # weeks after the stated publication date, so a publication-date window
-        # alone permanently loses anything indexed late. Skipped for explicit
-        # backfills, where the publication window is exactly what is wanted.
-        if not start_date:
-            created_start = (datetime.now() - timedelta(days=CREATED_WINDOW_DAYS)).strftime("%Y-%m-%d")
-            created_end = datetime.now().strftime("%Y-%m-%d")
-            print()
-            by_created = fetch_papers_from_openalex(created_start, created_end, date_field="created")
-            before = len(all_papers)
-            all_papers.extend(by_created)
-            print(f"  Index-date pass contributed {len(all_papers) - before} records (deduped below)")
     else:
         # Use RSS feeds (original behavior)
         for journal_name, feed_url in JOURNAL_FEEDS.items():
@@ -1007,6 +1048,22 @@ def main(
             "FATAL: fetched 0 papers. The source query failed or returned nothing, "
             "so this run would silently skip its entire date window."
         )
+
+    if not dry_run:
+        record_first_observed(all_papers)
+
+    # Explicit backfills retain queued work outside their requested window.
+    pending = load_pending_papers()
+    preserved_pending = []
+    if start_date or days_override is not None:
+        pending_in_window = []
+        for paper in pending:
+            if cutoff_date.date() <= paper['date'].date() <= (end_cutoff or datetime.now()).date():
+                pending_in_window.append(paper)
+            else:
+                preserved_pending.append(paper)
+        pending = pending_in_window
+    all_papers = pending + all_papers
 
     # Dedupe by normalized title (+ year) to avoid duplicates across feeds
     deduped_papers = _dedupe_papers_by_title(all_papers)
@@ -1062,16 +1119,38 @@ def main(
         key=lambda x: (_has_priority_title(x['title']), x['keyword_score_raw']),
         reverse=True,
     )
+    if fetch_only:
+        print("\nFETCH ONLY: no AI calls, email, or state/log changes.")
+        for paper in keyword_candidates[:20]:
+            print(f"  [keyword {paper['keyword_score_raw']}] {paper['title']}")
+        if preview_file:
+            rows = "".join(
+                f"<li><a href='{html_escape(p['link'], quote=True)}'>{html_escape(p['title'])}</a>"
+                f" — {html_escape(p['journal'])}, {p['date']:%Y-%m-%d}; keyword score {p['keyword_score_raw']}</li>"
+                for p in keyword_candidates[:100]
+            )
+            preview_file.write_text(
+                "<!doctype html><html><head><meta charset='utf-8'><title>Paper scout retrieval preview</title></head>"
+                f"<body><h1>Paper scout retrieval preview</h1><p>{len(all_papers)} retrieved, "
+                f"{len(new_papers)} unseen, {len(keyword_candidates)} keyword candidates. "
+                "Showing up to 100 candidates. No AI scoring or summaries have been performed.</p>"
+                f"<ol>{rows}</ol></body></html>", encoding="utf-8",
+            )
+        return 0
+
+    dropped = []
     if len(keyword_candidates) > llm_cap:
         dropped = keyword_candidates[llm_cap:]
         keyword_candidates = keyword_candidates[:llm_cap]
-        print(f"\nWARNING: {len(dropped)} candidates exceeded the LLM cap of {llm_cap} and were dropped.")
-        print("         Raise --max-llm-candidates if relevant papers are being lost.")
-        print("         Highest-scoring dropped papers:")
+        print(f"\n{len(dropped)} candidates exceeded the LLM cap of {llm_cap}; queued for a later run.")
+        print("         Highest-scoring deferred papers:")
         for paper in dropped[:5]:
             print(f"           - (raw={paper['keyword_score_raw']}) {paper['title'][:80]}")
     else:
         print(f"\nAll {len(keyword_candidates)} candidates fit inside the LLM cap of {llm_cap}.")
+
+    if not dry_run:
+        save_pending_papers(preserved_pending + keyword_candidates + dropped)
 
     # Fetch missing abstracts from Semantic Scholar (only for papers that passed keyword filter)
     papers_needing_abstract = [p for p in keyword_candidates if not p.get('abstract')]
@@ -1091,7 +1170,10 @@ def main(
     scored_papers = []
     for i, paper in enumerate(keyword_candidates):
         print(f"  Scoring {i+1}/{len(keyword_candidates)}: {paper['title'][:50]}...")
-        llm_score, llm_reason = get_llm_relevance_score(client, paper)
+        if "llm_score" in paper and "llm_reason" in paper:
+            llm_score, llm_reason = paper['llm_score'], paper['llm_reason']
+        else:
+            llm_score, llm_reason = get_llm_relevance_score(client, paper)
         paper['llm_score'] = llm_score
         paper['llm_reason'] = llm_reason
 
@@ -1111,6 +1193,13 @@ def main(
         if p['combined_score'] >= MIN_COMBINED_SCORE and p['llm_score'] >= MIN_LLM_SCORE
     ]
     relevant_papers.sort(key=lambda x: x['combined_score'], reverse=True)
+    relevant_ids = {get_paper_id(p) for p in relevant_papers}
+    rejected_papers = [p for p in scored_papers if get_paper_id(p) not in relevant_ids]
+    deferred_relevant = relevant_papers[MAX_PAPERS_PER_DIGEST:]
+
+    if not dry_run:
+        # Retain scores to avoid paying for AI scoring again after delivery failure.
+        save_pending_papers(preserved_pending + scored_papers + dropped)
 
     rejected_by_llm = sum(
         1 for p in scored_papers
@@ -1125,20 +1214,17 @@ def main(
         relevant_papers = relevant_papers[:MAX_PAPERS_PER_DIGEST]
         print(f"Limited to top {MAX_PAPERS_PER_DIGEST}")
 
-    # Mark as seen only after LLM scoring (track both link-based and title-based IDs)
-    for paper in scored_papers:
-        seen_papers.add(get_paper_id(paper))
-        title_id = get_title_id(paper)
-        if title_id:
-            seen_papers.add(title_id)
-    save_seen_papers(seen_papers)
-
     if not relevant_papers:
         print("\nNo relevant papers found today. No email sent.")
-        append_digest_log(scored_papers, set())
-        return
+        if preview_file:
+            preview_file.write_text(format_email_html([]), encoding="utf-8")
+        if not dry_run:
+            mark_papers_seen(seen_papers, rejected_papers)
+            save_pending_papers(preserved_pending + dropped)
+            append_digest_log(scored_papers, set())
+        return 0
 
-    # Stage 5: Generate summaries with Sonnet
+    # Stage 5: Generate summaries using the existing model.
     print(f"\nStage 3: Generating summaries...")
     for i, paper in enumerate(relevant_papers):
         print(f"  Summarizing {i+1}/{len(relevant_papers)}: {paper['title'][:50]}...")
@@ -1150,6 +1236,8 @@ def main(
     subject = f"Neuro Papers: {len(relevant_papers)} found - {datetime.now().strftime('%b %d')}"
     html_content = format_email_html(relevant_papers)
     text_content = format_email_text(relevant_papers)
+    if preview_file:
+        preview_file.write_text(html_content, encoding="utf-8")
 
     emailed_ids = set()
     if dry_run:
@@ -1162,20 +1250,26 @@ def main(
             emailed_ids = {get_paper_id(paper) for paper in relevant_papers}
             print(f"Email sent successfully to {RECIPIENT_EMAIL}")
         except Exception as e:
-            print(f"Error sending email: {e}")
-            backup_file = Path(__file__).parent / f"digest_{datetime.now().strftime('%Y%m%d')}.txt"
+            print(f"Error sending email ({type(e).__name__}); papers remain queued.")
+            backup_file = PENDING_PAPERS_FILE.parent / f"digest_{datetime.now().strftime('%Y%m%d')}.txt"
             with open(backup_file, "w") as f:
                 f.write(text_content)
             print(f"Digest saved to {backup_file}")
+            append_digest_log(scored_papers, set())
+            return 1
 
-    append_digest_log(scored_papers, emailed_ids)
+    if not dry_run:
+        mark_papers_seen(seen_papers, rejected_papers + relevant_papers)
+        save_pending_papers(preserved_pending + deferred_relevant + dropped)
+        append_digest_log(scored_papers, emailed_ids)
 
     print("\nDone!")
+    return 0
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    main(
+    sys.exit(main(
         days_override=args.days,
         include_seen=args.include_seen,
         start_date=args.start_date,
@@ -1184,4 +1278,6 @@ if __name__ == "__main__":
         use_rss=args.rss,
         max_llm_candidates=args.max_llm_candidates,
         dry_run=args.dry_run,
-    )
+        fetch_only=args.fetch_only,
+        preview_file=args.preview_file,
+    ))
