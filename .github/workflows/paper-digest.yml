@@ -31,9 +31,17 @@ on:
         required: false
         default: ""
       dry_run:
-        description: "Score and log everything but do not send the email (true/false)"
+        description: "Score and preview without email or state changes (true/false)"
         required: false
         default: "false"
+      fetch_only:
+        description: "Retrieval preview only: no AI calls, email or state changes (true/false)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: paper-digest-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -41,6 +49,7 @@ permissions:
 jobs:
   run-tracker:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -59,30 +68,54 @@ jobs:
 
       - name: Run tracker
         env:
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           PYTHONUNBUFFERED: "1"
+          INPUT_DAYS: ${{ inputs.days }}
+          INPUT_INCLUDE_SEEN: ${{ inputs.include_seen }}
+          INPUT_HISTORICAL: ${{ inputs.historical }}
+          INPUT_START_DATE: ${{ inputs.start_date }}
+          INPUT_END_DATE: ${{ inputs.end_date }}
+          INPUT_MAX_LLM: ${{ inputs.max_llm_candidates }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_FETCH_ONLY: ${{ inputs.fetch_only }}
         run: |
           args=()
-          if [ -n "${{ inputs.days }}" ]; then args+=("--days" "${{ inputs.days }}"); fi
-          if [ "${{ inputs.include_seen }}" = "true" ]; then args+=("--include-seen"); fi
-          if [ "${{ inputs.historical }}" = "true" ]; then args+=("--historical"); fi
-          if [ "${{ inputs.historical }}" = "false" ]; then args+=("--rss"); fi
-          if [ -n "${{ inputs.start_date }}" ]; then args+=("--start-date" "${{ inputs.start_date }}"); fi
-          if [ -n "${{ inputs.end_date }}" ]; then args+=("--end-date" "${{ inputs.end_date }}"); fi
-          if [ -n "${{ inputs.max_llm_candidates }}" ]; then args+=("--max-llm-candidates" "${{ inputs.max_llm_candidates }}"); fi
-          if [ "${{ inputs.dry_run }}" = "true" ]; then args+=("--dry-run"); fi
+          if [ -n "$INPUT_DAYS" ]; then args+=("--days" "$INPUT_DAYS"); fi
+          if [ "$INPUT_INCLUDE_SEEN" = "true" ]; then args+=("--include-seen"); fi
+          if [ "$INPUT_HISTORICAL" = "true" ]; then args+=("--historical"); fi
+          if [ "$INPUT_HISTORICAL" = "false" ]; then args+=("--rss"); fi
+          if [ -n "$INPUT_START_DATE" ]; then args+=("--start-date" "$INPUT_START_DATE"); fi
+          if [ -n "$INPUT_END_DATE" ]; then args+=("--end-date" "$INPUT_END_DATE"); fi
+          if [ -n "$INPUT_MAX_LLM" ]; then args+=("--max-llm-candidates" "$INPUT_MAX_LLM"); fi
+          if [ "$INPUT_DRY_RUN" = "true" ]; then args+=("--dry-run"); fi
+          if [ "$INPUT_FETCH_ONLY" = "true" ]; then args+=("--fetch-only"); fi
+          if [ "$INPUT_DRY_RUN" = "true" ] || [ "$INPUT_FETCH_ONLY" = "true" ]; then
+            args+=("--preview-file" "preview.html")
+          fi
           python paper_tracker.py "${args[@]}"
 
+      - name: Save preview
+        if: inputs.dry_run == 'true' || inputs.fetch_only == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-scout-preview
+          path: preview.html
+          if-no-files-found: ignore
+
       - name: Commit seen papers and digest log
-        if: always()
+        if: always() && github.ref == 'refs/heads/main' && inputs.dry_run != 'true' && inputs.fetch_only != 'true'
         run: |
-          if git status --porcelain | grep -qE "seen_papers.json|digest_log.csv"; then
+          state_files=(seen_papers.json digest_log.csv first_observed.json pending_papers.json)
+          if [ -n "$(git status --porcelain -- "${state_files[@]}")" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add seen_papers.json digest_log.csv
+            for file in "${state_files[@]}"; do
+              if [ -f "$file" ]; then git add -- "$file"; fi
+            done
             git commit -m "Update seen papers and digest log"
             git pull --rebase --autostash
             git push

@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
 venv/
+.venv/
+preview*.html
+digest_*.txt
 .env
 config_local.py
 tracker.log

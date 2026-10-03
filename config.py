@@ -23,6 +23,9 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 # === OPENAI API ===
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
+# Free key increases OpenAlex's daily budget. It does not unlock paid sync filters.
+OPENALEX_API_KEY = os.getenv("OPENALEX_API_KEY", "")
+
 # === JOURNAL RSS FEEDS ===
 # These are the RSS/Atom feeds for major neuroscience journals
 JOURNAL_FEEDS = {
@@ -148,9 +151,9 @@ MIN_LLM_SCORE = 50
 # is safe because seen_papers.json is what prevents repeats, not the window.
 DAYS_TO_CHECK = 14
 
-# Days back to also sweep by OpenAlex *index* date, catching papers whose
-# publication date falls outside the window above but were only deposited now.
-CREATED_WINDOW_DAYS = 21
+# Revisit older publication dates to catch late indexing without paid sync filters.
+# This is a bounded overlap, not a guarantee of catching every late deposit.
+PUBLICATION_OVERLAP_DAYS = 60
 
 # Maximum papers to include in digest (to avoid overwhelming emails)
 MAX_PAPERS_PER_DIGEST = 20
