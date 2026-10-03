@@ -126,10 +126,20 @@ class PaginationTests(unittest.TestCase):
 
     def test_page_limit_fails_closed(self):
         self.get.side_effect = [
-            {'results': [self.work], 'meta': {'next_cursor': str(i)}} for i in range(120)
+            {'results': [self.work], 'meta': {'next_cursor': str(i)}} for i in range(300)
         ]
-        with self.assertRaisesRegex(RuntimeError, '120-page limit'):
+        with self.assertRaisesRegex(RuntimeError, '300-page limit'):
             tracker.fetch_papers_from_openalex('2026-09-01', '2026-10-03')
+
+    def test_busy_window_completes_past_previous_page_limit(self):
+        self.get.side_effect = [
+            {'results': [self.work], 'meta': {'next_cursor': str(i)}} for i in range(120)
+        ] + [{'results': [self.work], 'meta': {'next_cursor': None}}]
+        papers = tracker.fetch_papers_from_openalex('2026-08-04', '2026-10-03')
+        self.assertEqual(len(papers), 121)
+        self.assertEqual(self.get.call_count, 121)
+        deadlines = {call.kwargs['deadline'] for call in self.get.call_args_list}
+        self.assertEqual(len(deadlines), 1)
 
     def test_missing_pagination_metadata_fails(self):
         self.get.return_value = {'results': [self.work], 'meta': {}}
