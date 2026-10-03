@@ -643,7 +643,7 @@ Summary:"""
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        return f"[Summary unavailable: {e}]"
+        return f"[Summary unavailable ({type(e).__name__})]"
 
 
 def fetch_papers_from_feed(journal_name: str, feed_url: str, cutoff_date: datetime) -> list[dict]:
@@ -1216,6 +1216,8 @@ def main(
 
     if not relevant_papers:
         print("\nNo relevant papers found today. No email sent.")
+        if preview_file:
+            preview_file.write_text(format_email_html([]), encoding="utf-8")
         if not dry_run:
             mark_papers_seen(seen_papers, rejected_papers)
             save_pending_papers(preserved_pending + dropped)

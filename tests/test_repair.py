@@ -285,8 +285,21 @@ class RunTests(unittest.TestCase):
         self.assertEqual(tracker.main(start_date='bad', fetch_only=True), 2)
         self.fetch.assert_not_called()
 
+    def test_no_relevant_papers_still_produces_dry_run_preview(self):
+        self.score.return_value = (10, 'Not relevant.')
+        preview = self.directory / 'preview.html'
+        self.assertEqual(tracker.main(dry_run=True, preview_file=preview), 0)
+        self.assertIn('0 relevant papers', preview.read_text())
+        self.assertFalse(any(p.exists() for p in self.paths.values()))
+
 
 class ScoringTests(unittest.TestCase):
+    def test_summary_error_omits_provider_details(self):
+        client = Mock()
+        client.chat.completions.create.side_effect = RuntimeError('provider credential details')
+        summary = tracker.summarize_paper(client, {'title': 'Example', 'abstract': 'A' * 100})
+        self.assertEqual(summary, '[Summary unavailable (RuntimeError)]')
+
     def test_provider_failure_is_not_a_zero_score(self):
         client = Mock()
         client.chat.completions.create.side_effect = RuntimeError('provider credential details')
