@@ -239,7 +239,7 @@ def fetch_papers_from_openalex(start_date: str, end_date: str, search_terms: lis
     # Use the currently documented 100-result page size.
     cursor = "*"
     page_count = 0
-    max_pages = 120  # 120 * 100 = 12000 papers; incomplete windows fail closed.
+    max_pages = 300  # Allow busier overlap windows; the shared 5-minute deadline still applies.
     visited_cursors = set()
 
     # Created-date filtering remains available to callers with a paid plan.

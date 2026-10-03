@@ -25,7 +25,7 @@ You can [run the workflow manually](https://github.com/neurochilds/journal-diges
 - `dry_run`: Set to `true` to score and preview without sending email or changing state/logs. This still makes paid AI calls.
 - `fetch_only`: Set to `true` for retrieval and keyword ranking without AI calls, email or state/log changes.
 
-Preview runs upload a `paper-scout-preview` HTML artifact. The digest job has a 40-minute timeout; OpenAlex retrieval has a shared 5-minute budget, at most five attempts per request, and fails rather than returning incomplete results. Runs on the same branch are serialized.
+Preview runs upload a `paper-scout-preview` HTML artifact. The digest job has a 40-minute timeout; OpenAlex retrieval has a shared 5-minute budget, at most five attempts per request and a 300-page ceiling, and fails rather than returning incomplete results. Runs on the same branch are serialized.
 
 **Examples**
 - Look back 7 days:
