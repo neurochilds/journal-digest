@@ -1,9 +1,7 @@
 name: Neuro Paper Digest
 
 on:
-  schedule:
-    # Mondays + Thursdays at 09:45 (UTC). Note: GitHub Actions uses UTC.
-    - cron: "45 9 * * 1,4"
+  # Production runs on Umbrel: Mon/Thu 09:45 UTC. Hosted runs are preview-only.
   workflow_dispatch:
     inputs:
       days:
@@ -31,9 +29,9 @@ on:
         required: false
         default: ""
       dry_run:
-        description: "Score and preview without email or state changes (true/false)"
+        description: "Preview only; production delivery runs on Umbrel"
         required: false
-        default: "false"
+        default: "true"
       fetch_only:
         description: "Retrieval preview only: no AI calls, email or state changes (true/false)"
         required: false
@@ -51,6 +49,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
+      - name: Require a preview on GitHub
+        env:
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_FETCH_ONLY: ${{ inputs.fetch_only }}
+        run: |
+          if [ "$INPUT_DRY_RUN" != "true" ] && [ "$INPUT_FETCH_ONLY" != "true" ]; then
+            echo "Production delivery runs on Umbrel; select dry_run or fetch_only."
+            exit 1
+          fi
       - name: Check out repo
         uses: actions/checkout@v4
         with:
@@ -105,20 +112,3 @@ jobs:
           name: paper-scout-preview
           path: preview.html
           if-no-files-found: ignore
-
-      - name: Commit seen papers and digest log
-        if: always() && github.ref == 'refs/heads/main' && inputs.dry_run != 'true' && inputs.fetch_only != 'true'
-        run: |
-          state_files=(seen_papers.json digest_log.csv first_observed.json pending_papers.json)
-          if [ -n "$(git status --porcelain -- "${state_files[@]}")" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            for file in "${state_files[@]}"; do
-              if [ -f "$file" ]; then git add -- "$file"; fi
-            done
-            git commit -m "Update seen papers and digest log"
-            git pull --rebase --autostash
-            git push
-          else
-            echo "No changes to commit"
-          fi
