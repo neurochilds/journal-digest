@@ -17,6 +17,27 @@ KEYS = ('OPENALEX_API_KEY', 'OPENAI_API_KEY', 'GMAIL_ADDRESS',
 STATE_FILES = ('seen_papers.json', 'first_observed.json', 'pending_papers.json', 'digest_log.csv')
 
 
+class RedactedStream:
+    def __init__(self, stream, values):
+        self.stream, self.values, self.pending = stream, sorted(values, key=len, reverse=True), ''
+
+    def write(self, text):
+        self.pending += text
+        while '\n' in self.pending:
+            line, self.pending = self.pending.split('\n', 1)
+            for value in self.values:
+                line = line.replace(value, '[redacted]')
+            self.stream.write(line+'\n')
+        return len(text)
+
+    def flush(self):
+        # Keep incomplete lines buffered so a split credential cannot escape.
+        self.stream.flush()
+
+    def isatty(self):
+        return False
+
+
 def atomic(path, value):
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix='.'+path.name)
     try:
@@ -56,6 +77,8 @@ def main():
     values = json.loads(credential.read_text())
     if set(values) != set(KEYS) or any(not isinstance(v, str) or not v for v in values.values()):
         raise ValueError('Digest credentials are incomplete')
+    sys.stdout = RedactedStream(sys.stdout, values.values())
+    sys.stderr = RedactedStream(sys.stderr, values.values())
     os.environ.update(values)
     os.environ['PAPER_SCOUT_STATE_DIR'] = str(args.state.resolve())
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

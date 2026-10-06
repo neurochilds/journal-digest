@@ -11,10 +11,18 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from deploy.encrypt_credentials import CONTEXT, KEYS, encrypt
-from deploy.run_scout import guarded_delivery
+from deploy.run_scout import guarded_delivery, RedactedStream
 
 
 class MigrationTests(unittest.TestCase):
+    def test_credentials_are_redacted_across_stream_writes(self):
+        import io
+        target = io.StringIO()
+        stream = RedactedStream(target, ['dummy-secret'])
+        stream.write('provider error: dummy-'); stream.flush()
+        self.assertEqual(target.getvalue(), '')
+        stream.write('secret\n')
+        self.assertEqual(target.getvalue(), 'provider error: [redacted]\n')
     def test_only_umbrel_private_key_decrypts_and_tamper_fails(self):
         import base64
         private = rsa.generate_private_key(public_exponent=65537, key_size=3072)

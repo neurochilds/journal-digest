@@ -2,13 +2,12 @@
 
 This repo runs a daily/weekly digest that scans neuroscience papers (OpenAlex by default), scores relevance with keywords + GPT, summarizes top papers, and emails a digest. It keeps track of previously seen papers in `seen_papers.json` so you don’t get duplicates.
 
-## How It Runs (GitHub Actions)
-The workflow lives at:
-- `.github/workflows/paper-digest.yml`
+## How It Runs (Umbrel)
+Production runs through `deploy/paper-scout.service` and `deploy/paper-scout.timer` on Umbrel. See [runtime and cutover details](deploy/README.md). Persistent history lives in `/var/lib/paper-scout`; the source repository retains the history snapshot from cutover. GitHub Actions is now for manual previews only.
 
 ### Schedule
 Currently scheduled for **Mondays and Thursdays at 09:45 UTC**.
-If you want **09:45 in your local timezone**, update the cron time accordingly (GitHub schedules use UTC).
+The native timer uses UTC: 10:45 during British summer time and 09:45 in winter. There is no hosted production cron. Missed native runs catch up after downtime; initial cutover skips the already-delivered hosted run.
 
 ### Manual Runs
 You can [run the workflow manually](https://github.com/neurochilds/journal-digest/actions/workflows/paper-digest.yml) with custom inputs:
@@ -36,7 +35,7 @@ Preview runs upload a `paper-scout-preview` HTML artifact. The digest job has a 
   - `end_date: 2026-01-15`
   - `historical: true`
 
-Production runs persist state back to `main`; previews do not. The Monday/Thursday schedule is unchanged.
+Production updates persistent state on Umbrel and makes a private pre-run snapshot; previews do not change delivery history. Hosted previews require `dry_run` or `fetch_only` and cannot send email. Their repository history is the cutover snapshot, so later preview candidates may differ from the worker’s current queue.
 
 ## OpenAlex repair and late indexing
 
@@ -61,7 +60,7 @@ OpenAlex references: [authentication](https://help.openalex.org/api/authenticati
 - `first_observed.json` records when this tracker first observed a work, not when OpenAlex created it. Retrieval previews do not change it.
 - `pending_papers.json` retains candidates deferred by the AI/digest caps or failed delivery, including completed scores. Default runs also drain this queue after papers leave the publication overlap. Explicit backfills preserve queued work outside their requested window.
 - Relevant papers become seen after SMTP accepts the digest. Rejected scored papers are also recorded as processed on a successful run. API failures stop the run, and delivery failures return a nonzero exit code without consuming the selected papers.
-- Seen and queue JSON files are replaced atomically. SMTP and local files cannot form one atomic transaction: a crash after SMTP accepts mail but before state saves can cause a duplicate on retry. Exact-once delivery is not guaranteed.
+- Seen and queue JSON files are replaced atomically. SMTP and local files cannot form one atomic transaction. The native wrapper durably marks uncertainty before SMTP and clears its guard only after the tracker finishes its state writes. An ambiguous/crashed delivery blocks subsequent native production runs for reconciliation, preventing automatic replay. Direct CLI runs outside that wrapper do not have this extra guard; exact-once delivery is not guaranteed.
 
 ## Tuning (config.py)
 
@@ -79,7 +78,7 @@ OpenAlex references: [authentication](https://help.openalex.org/api/authenticati
 A paper with a core term in its **title** (hippocampal, entorhinal, theta, replay, remapping, multisensory, ...) is always ranked ahead of keyword-dense abstracts when the candidate cap bites.
 
 ## Required Secrets
-Add these under **Settings → Secrets and variables → Actions**:
+Native credentials are root-owned outside source under `/etc/paper-scout` and loaded privately by systemd. For hosted previews, add these under **Settings → Secrets and variables → Actions**:
 - `OPENAI_API_KEY`
 - `GMAIL_ADDRESS`
 - `GMAIL_APP_PASSWORD`
