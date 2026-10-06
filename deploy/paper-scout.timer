@@ -1,0 +1,11 @@
+[Unit]
+Description=Paper scout every Monday and Thursday at 09:45 UTC
+
+[Timer]
+OnCalendar=Mon,Thu *-*-* 09:45:00 UTC
+Persistent=true
+AccuracySec=1s
+Unit=paper-scout.service
+
+[Install]
+WantedBy=timers.target

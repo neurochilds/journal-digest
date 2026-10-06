@@ -38,13 +38,14 @@ from config import (
 )
 
 # File to track which papers we've already processed
-SEEN_PAPERS_FILE = Path(__file__).parent / "seen_papers.json"
-FIRST_OBSERVED_FILE = Path(__file__).parent / "first_observed.json"
-PENDING_PAPERS_FILE = Path(__file__).parent / "pending_papers.json"
+STATE_DIR = Path(os.environ.get("PAPER_SCOUT_STATE_DIR", Path(__file__).parent))
+SEEN_PAPERS_FILE = STATE_DIR / "seen_papers.json"
+FIRST_OBSERVED_FILE = STATE_DIR / "first_observed.json"
+PENDING_PAPERS_FILE = STATE_DIR / "pending_papers.json"
 
 # Permanent, human-readable record of every paper that reached AI scoring,
 # whether or not it made it into a digest email.
-DIGEST_LOG_FILE = Path(__file__).parent / "digest_log.csv"
+DIGEST_LOG_FILE = STATE_DIR / "digest_log.csv"
 DIGEST_LOG_FIELDS = [
     "run_date", "emailed", "title", "journal", "link", "publication_date",
     "keyword_score", "llm_score", "combined_score", "llm_reason",
