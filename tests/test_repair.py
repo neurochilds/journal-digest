@@ -216,6 +216,29 @@ class RunTests(unittest.TestCase):
         self.assertIn(tracker.get_title_id(self.paper), seen)
         self.assertEqual(json.loads(self.paths['PENDING_PAPERS_FILE'].read_text()), [])
 
+    def test_changed_rubric_or_model_rescreens_pending_scores(self):
+        for changes in ({'llm_rubric': 'old-rubric'}, {'llm_model': 'old-model'}):
+            with self.subTest(changes=changes):
+                paper = dict(self.paper, llm_score=91, llm_reason='Old relevance.',
+                             llm_model='gpt-5.1', llm_rubric=tracker.RELEVANCE_VERSION,
+                             llm_input=tracker.score_input(self.paper))
+                paper.update(changes)
+                tracker.save_pending_papers([paper])
+                self.score.reset_mock(); self.send.reset_mock()
+                self.score.return_value = (10, 'Peripheral background.')
+                self.assertEqual(tracker.main(dry_run=True), 0)
+                self.score.assert_called_once()
+                self.send.assert_not_called()
+                self.assertEqual(tracker.load_pending_papers()[0]['llm_score'], 91)
+
+    def test_auditory_navigation_survives_cap_ahead_of_generic_hippocampus(self):
+        auditory = dict(self.paper, title='Auditory-guided navigation',
+                        link='https://doi.org/10.1/auditory',
+                        abstract='Mice used acoustic cues to navigate to a reward location.')
+        self.fetch.side_effect = lambda *a, **kw: [copy.deepcopy(self.paper), copy.deepcopy(auditory)]
+        self.assertEqual(tracker.main(max_llm_candidates=1, dry_run=True), 0)
+        self.assertEqual(self.score.call_args.args[1]['title'], auditory['title'])
+
     def test_digest_overflow_remains_queued_and_unseen(self):
         second = dict(self.paper, title='Hippocampal navigation two', link='https://doi.org/10.1/two')
         self.fetch.side_effect = lambda *a, **kw: [copy.deepcopy(self.paper), copy.deepcopy(second)]

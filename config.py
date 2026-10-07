@@ -105,7 +105,7 @@ KEYWORDS = {
         "landmark", "boundary cell",
     ],
 
-    # Relevant researchers (broad net, Haiku will filter)
+    # Relevant researchers (broad net; the relevance rubric filters)
     "researchers": [
         "buzsaki", "buzsáki", "eichenbaum", "behrens",
         "moser", "o'keefe", "okeefe", "tolman",
