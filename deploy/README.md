@@ -42,10 +42,12 @@ The validated worker model is `gpt-6.1-sol`, with reasoning explicitly set to
 `medium` for scoring and summaries. The authenticated worker catalog and live
 requests establish this route with CLI 0.160.1. The older CLI 0.153.4 rejected
 the same model; its binary remains available for rollback.
-The relevance rubric, thresholds, abstract lengths, recipient, search window,
+The shared [relevance rubric](../relevance.py) prioritises the confirmed sensory,
+navigation and state-coding interests. Thresholds, abstract lengths, recipient, search window,
 200-candidate ceiling and 20-paper email limit are preserved. New uncached
 scores use batches of ten abstracts, and selected summaries use batches of ten.
-Previously cached relevance scores remain valid. Successful scoring batches
+Cached scores are valid only for the same rubric, model and scoring text;
+stale pending scores are rechecked without altering sent history. Successful scoring batches
 checkpoint pending state so later failures do not repeat completed scoring.
 
 Each call has a 120-second deadline, within a shared 20-minute AI budget and

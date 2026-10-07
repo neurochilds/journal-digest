@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from relevance import RELEVANCE_VERSION, score_input
 
 
 class CodexScorer:
@@ -114,6 +115,8 @@ class CodexScorer:
                 self.scores[self.key(paper)] = (row['score'], row['reason'].strip())
                 paper['llm_score'], paper['llm_reason'] = self.scores[self.key(paper)]
                 paper['llm_model'] = self.model
+                paper['llm_rubric'] = RELEVANCE_VERSION
+                paper['llm_input'] = score_input(paper)
             if on_batch:
                 on_batch()
 

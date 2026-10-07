@@ -12,6 +12,25 @@ Quota or authentication failures retain candidates for a later run. The legacy
 desktop and optional hosted AI-preview paths still explicitly use an API key;
 they are not part of the native schedule. Native Codex auth lives outside Git.
 
+### Reading priorities
+
+The shared [relevance guidelines](relevance.py) prioritise multimodal hippocampal
+coding, multisensory navigation, auditory navigation and auditory hippocampal
+representations, alongside sensory versus inferred-state/action coding and
+directly useful integration models, circuitry and analyses. Any one of these
+directions can justify a high score; other regions, human studies and behavioural
+work are eligible. Generic hippocampal memory/novelty work is background unless
+its findings establish a specific connection. Relevance notes explain both the
+finding and its practical connection or limitation. Scores measure reading
+priority, not study quality or certainty; screening uses abstracts, not full papers.
+
+The retrieval query includes auditory work. Explicit auditory/multisensory
+hippocampal and navigation candidates precede generic hippocampal titles at the
+200-candidate cap; acronym keywords match whole words. These are candidate
+heuristics, not proof of relevance. Cached scores require the same rubric, model
+and scoring text; stale pending scores are rechecked when selected. Previously
+sent papers and historical log rows stay suppressed/intact.
+
 ### Schedule
 Currently scheduled for **Mondays and Thursdays at 09:45 UTC**.
 The native timer uses UTC: 10:45 during British summer time and 09:45 in winter. There is no hosted production cron. Missed native runs catch up after downtime; initial cutover skips the already-delivered hosted run.
