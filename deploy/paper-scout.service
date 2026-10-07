@@ -13,9 +13,9 @@ WorkingDirectory=/opt/paper-scout/current
 ExecStart=/opt/paper-scout/venv/bin/python /opt/paper-scout/current/deploy/run_scout.py
 LoadCredential=credentials.json:/etc/paper-scout/credentials.json
 Environment=PAPER_SCOUT_AI_BACKEND=codex
-Environment=PAPER_SCOUT_CODEX_BIN=/opt/paper-scout/codex
+Environment=PAPER_SCOUT_CODEX_BIN=/opt/paper-scout/codex-0.160.1
 Environment=PAPER_SCOUT_CODEX_HOME=/var/lib/paper-scout/codex-auth
-Environment=PAPER_SCOUT_CODEX_MODEL=gpt-5.6-sol
+Environment=PAPER_SCOUT_CODEX_MODEL=gpt-6.1-sol
 TimeoutStartSec=40min
 UMask=0077
 NoNewPrivileges=true
