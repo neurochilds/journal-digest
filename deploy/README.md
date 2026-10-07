@@ -32,15 +32,16 @@ production service retains the original scoring rules, recipient and window.
 ## Codex subscription scoring
 
 The production unit now selects `PAPER_SCOUT_AI_BACKEND=codex`, using the pinned
-Codex CLI at `/opt/paper-scout/codex` and a private ChatGPT auth cache at
+Codex CLI 0.160.1 at `/opt/paper-scout/codex-0.160.1` and a private ChatGPT auth cache at
 `/var/lib/paper-scout/codex-auth/auth.json`. Credentials are provisioned privately
 over SSH using the documented Codex headless-auth flow; they never enter Git,
 source archives, Actions, preview output or history backups. Codex owns token
 refresh in this directory. Reauthentication may eventually be required.
 
-The validated worker model is `gpt-5.6-sol` at Medium. The authenticated worker
-catalog and a real scoring/summary request establish this route; `gpt-6.1-sol`
-was explicitly rejected by that route, despite being listed in the Mac catalog.
+The validated worker model is `gpt-6.1-sol`, with reasoning explicitly set to
+`medium` for scoring and summaries. The authenticated worker catalog and live
+requests establish this route with CLI 0.160.1. The older CLI 0.153.4 rejected
+the same model; its binary remains available for rollback.
 The relevance rubric, thresholds, abstract lengths, recipient, search window,
 200-candidate ceiling and 20-paper email limit are preserved. New uncached
 scores use batches of ten abstracts, and selected summaries use batches of ten.
