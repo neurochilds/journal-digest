@@ -75,11 +75,18 @@ def main():
     os.umask(0o077)
     credential = args.credentials or Path(os.environ['CREDENTIALS_DIRECTORY'])/'credentials.json'
     values = json.loads(credential.read_text())
-    if set(values) != set(KEYS) or any(not isinstance(v, str) or not v for v in values.values()):
+    required = set(KEYS)
+    backend = os.environ.get('PAPER_SCOUT_AI_BACKEND', 'api')
+    if backend == 'codex':
+        required.remove('OPENAI_API_KEY')
+    if not required <= set(values) <= set(KEYS) or any(not isinstance(v, str) or not v for v in values.values()):
         raise ValueError('Digest credentials are incomplete')
     sys.stdout = RedactedStream(sys.stdout, values.values())
     sys.stderr = RedactedStream(sys.stderr, values.values())
-    os.environ.update(values)
+    os.environ.update({k: v for k, v in values.items() if backend != 'codex' or k != 'OPENAI_API_KEY'})
+    if backend == 'codex':
+        for key in ('OPENAI_API_KEY', 'CODEX_API_KEY'):
+            os.environ.pop(key, None)
     os.environ['PAPER_SCOUT_STATE_DIR'] = str(args.state.resolve())
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     import paper_tracker as tracker
