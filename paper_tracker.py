@@ -28,6 +28,7 @@ import sys
 import tempfile
 
 from openai import OpenAI
+from codex_scorer import CodexScorer
 from openalex_client import get_json as openalex_get_json, FETCH_BUDGET_SECONDS
 
 from config import (
@@ -553,12 +554,8 @@ def normalize_keyword_score(raw_score: int, max_expected: int = 100) -> int:
     return normalized
 
 
-def get_llm_relevance_score(client: OpenAI, paper: dict) -> tuple[int, str]:
-    """
-    Use GPT to score paper relevance 0-100.
-    Returns (score, brief_reason).
-    """
-    prompt = f"""Rate this paper's relevance (0-100) for a PhD student studying:
+def relevance_prompt(paper: dict) -> str:
+    return f"""Rate this paper's relevance (0-100) for a PhD student studying:
 
 1. HIPPOCAMPAL / MTL REPRESENTATIONS: What does hippocampal/entorhinal/MTL activity represent - sensory features, or internal computations like task state, action plans, and goal-directed sequences?
 
@@ -587,6 +584,12 @@ PENALIZE (score 0-30):
 - Papers focused purely on anatomy or connectivity without functional/cognitive relevance
 
 DO NOT stretch or exaggerate relevance. If a paper is only tangentially related, score it low."""
+
+
+def get_llm_relevance_score(client: OpenAI, paper: dict) -> tuple[int, str]:
+    if isinstance(client, CodexScorer):
+        return client.scores[client.key(paper)]
+    prompt = relevance_prompt(paper)
 
     try:
         response = client.chat.completions.create(
@@ -625,6 +628,8 @@ def summarize_paper(client: OpenAI, paper: dict) -> str:
 
     if not paper.get('abstract') or len(paper.get('abstract', '')) < 50:
         return "[No abstract available - visit link to read paper]"
+    if isinstance(client, CodexScorer):
+        return client.summaries[client.key(paper)]
 
     prompt = f"""Summarize this paper accurately in 2-3 sentences based ONLY on what the abstract actually says.
 Do NOT speculate, extrapolate, or add interpretations that aren't directly stated.
@@ -1007,8 +1012,15 @@ def main(
 
     client = None
     if not fetch_only:
-        _require_setting("OPENAI_API_KEY", OPENAI_API_KEY)
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        backend = os.environ.get("PAPER_SCOUT_AI_BACKEND", "api")
+        if backend == "codex":
+            client = CodexScorer()
+            print(f"AI: Codex subscription / {client.model} / medium; API fallback disabled")
+        elif backend == "api":
+            _require_setting("OPENAI_API_KEY", OPENAI_API_KEY)
+            client = OpenAI(api_key=OPENAI_API_KEY)
+        else:
+            raise ValueError("Unknown paper scout AI backend")
     if not dry_run:
         _require_setting("GMAIL_ADDRESS", GMAIL_ADDRESS)
         _require_setting("GMAIL_APP_PASSWORD", GMAIL_APP_PASSWORD)
@@ -1169,6 +1181,11 @@ def main(
     # Stage 3: LLM scoring
     print(f"\nStage 2: AI relevance scoring ({len(keyword_candidates)} papers)...")
     scored_papers = []
+    if isinstance(client, CodexScorer):
+        client.score_many([p for p in keyword_candidates if not ("llm_score" in p and "llm_reason" in p)],
+                          relevance_prompt({"title": "[See supplied papers]", "abstract": ""}),
+                          on_batch=(lambda: save_pending_papers(preserved_pending + keyword_candidates + dropped))
+                          if not dry_run else None)
     for i, paper in enumerate(keyword_candidates):
         print(f"  Scoring {i+1}/{len(keyword_candidates)}: {paper['title'][:50]}...")
         if "llm_score" in paper and "llm_reason" in paper:
@@ -1227,6 +1244,8 @@ def main(
 
     # Stage 5: Generate summaries using the existing model.
     print(f"\nStage 3: Generating summaries...")
+    if isinstance(client, CodexScorer):
+        client.summarize_many(relevant_papers)
     for i, paper in enumerate(relevant_papers):
         print(f"  Summarizing {i+1}/{len(relevant_papers)}: {paper['title'][:50]}...")
         paper['summary'] = summarize_paper(client, paper)

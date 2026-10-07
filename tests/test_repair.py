@@ -236,6 +236,21 @@ class RunTests(unittest.TestCase):
         self.assertEqual(pending[0]['title'], second['title'])
         self.assertNotIn('llm_score', pending[0])
 
+    def test_codex_failure_keeps_candidate_without_api_or_delivery(self):
+        home = self.directory / 'codex'
+        home.mkdir()
+        (home / 'auth.json').write_text(json.dumps({'auth_mode': 'chatgpt', 'tokens': {'fixture': True}}))
+        with patch.dict(tracker.os.environ, {'PAPER_SCOUT_AI_BACKEND': 'codex',
+                        'PAPER_SCOUT_CODEX_HOME': str(home), 'PAPER_SCOUT_CODEX_BIN': '/test/codex',
+                        'PAPER_SCOUT_CODEX_MODEL': 'gpt-5.6-sol'}), \
+                patch.object(tracker.CodexScorer, 'request', side_effect=RuntimeError('Usage limit')):
+            with self.assertRaisesRegex(RuntimeError, 'Usage limit'):
+                tracker.main()
+        self.client.assert_not_called()
+        self.send.assert_not_called()
+        self.assertFalse(self.paths['SEEN_PAPERS_FILE'].exists())
+        self.assertEqual(tracker.load_pending_papers()[0]['title'], self.paper['title'])
+
     def test_explicit_backfill_preserves_pending_outside_window(self):
         old = dict(self.paper, title='Hippocampal old queued paper', link='https://doi.org/10.1/old', date=datetime(2025, 1, 1))
         tracker.save_pending_papers([old])

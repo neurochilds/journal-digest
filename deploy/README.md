@@ -27,7 +27,35 @@ setup remains separate: these credentials are for the existing digest only.
 `run_scout.py --probe` validates authenticated OpenAlex reads and SMTP login
 without sending email. `--preview` scores at most one candidate with a one-day
 search and generates a preview without changing sent/queue history. The
-production service retains original scoring rules/model/recipient/window.
+production service retains the original scoring rules, recipient and window.
+
+## Codex subscription scoring
+
+The production unit now selects `PAPER_SCOUT_AI_BACKEND=codex`, using the pinned
+Codex CLI at `/opt/paper-scout/codex` and a private ChatGPT auth cache at
+`/var/lib/paper-scout/codex-auth/auth.json`. Credentials are provisioned privately
+over SSH using the documented Codex headless-auth flow; they never enter Git,
+source archives, Actions, preview output or history backups. Codex owns token
+refresh in this directory. Reauthentication may eventually be required.
+
+The validated worker model is `gpt-5.6-sol` at Medium. The authenticated worker
+catalog and a real scoring/summary request establish this route; `gpt-6.1-sol`
+was explicitly rejected by that route, despite being listed in the Mac catalog.
+The relevance rubric, thresholds, abstract lengths, recipient, search window,
+200-candidate ceiling and 20-paper email limit are preserved. New uncached
+scores use batches of ten abstracts, and selected summaries use batches of ten.
+Previously cached relevance scores remain valid. Successful scoring batches
+checkpoint pending state so later failures do not repeat completed scoring.
+
+Each call has a 120-second deadline, within a shared 20-minute AI budget and
+the existing 40-minute service limit. Structured results require all requested
+paper IDs exactly once, bounded scores and nonempty text. CLI shell, browser,
+apps, plugins, memory, delegation and optional code-host tools are disabled;
+unexpected tool activity is rejected. Calls run read-only in an empty temporary
+directory, using an isolated environment with no mail or API credentials.
+Quota/authentication/invalid-output failures leave candidates pending and send
+no digest. No automatic fallback to paid API calls is permitted. The legacy
+API backend remains available only when explicitly selected outside this unit.
 
 All four state files are copied into a private snapshot before each real run.
 No backup pruning is enabled. A file lock prevents concurrent worker runs.

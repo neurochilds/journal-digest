@@ -5,6 +5,13 @@ This repo runs a daily/weekly digest that scans neuroscience papers (OpenAlex by
 ## How It Runs (Umbrel)
 Production runs through `deploy/paper-scout.service` and `deploy/paper-scout.timer` on Umbrel. See [runtime and cutover details](deploy/README.md). Persistent history lives in `/var/lib/paper-scout`; the source repository retains the history snapshot from cutover. GitHub Actions is now for manual previews only.
 
+The Umbrel service uses **Codex subscription authentication**, with **GPT-5.6 Sol
+at Medium** for relevance and summaries. It batches ten abstracts per call,
+preserves completed scores, and never falls back to paid OpenAI API calls.
+Quota or authentication failures retain candidates for a later run. The legacy
+desktop and optional hosted AI-preview paths still explicitly use an API key;
+they are not part of the native schedule. Native Codex auth lives outside Git.
+
 ### Schedule
 Currently scheduled for **Mondays and Thursdays at 09:45 UTC**.
 The native timer uses UTC: 10:45 during British summer time and 09:45 in winter. There is no hosted production cron. Missed native runs catch up after downtime; initial cutover skips the already-delivered hosted run.
