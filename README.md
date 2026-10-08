@@ -26,9 +26,10 @@ priority, not study quality or certainty; screening uses abstracts, not full pap
 
 The displayed score and final ranking use AI reading priority alone. Keyword
 counts help discovery and candidate selection, but cannot boost or penalise the
-final score. Owner-approved calibration keeps internal task representations in
-V1 high and simple sound-source localisation substantially lower; neither species
-nor brain region determines the score. Every recommendation requires a specific
+final score. General criteria distinguish direct tests of sensory/internal
+representations and cue integration from thematic overlap; neither species,
+brain region, paper title nor a previous digest determines the score. The prompt
+contains no paper-specific examples or prescribed paper scores. Every recommendation requires a specific
 practical contribution and an explicit missing test or remaining alternative.
 
 Emails separate **Direct relevance** (85+; up to eight), **Transferable ideas**

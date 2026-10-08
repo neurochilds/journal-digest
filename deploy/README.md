@@ -43,8 +43,8 @@ The validated worker model is `gpt-6.1-sol`, with reasoning explicitly set to
 requests establish this route with CLI 0.160.1. The older CLI 0.153.4 rejected
 the same model; its binary remains available for rollback.
 The shared [relevance rubric](../relevance.py) prioritises the confirmed sensory,
-navigation and state-coding interests, with owner-approved high V1/low simple
-sound-localisation examples. Final scores are AI-only; keywords remain discovery
+navigation and state-coding interests through general experimental and practical
+criteria, without paper-specific examples or prescribed scores. Final scores are AI-only; keywords remain discovery
 hints. Emails have direct, transferable, background and resource sections capped
 at 8/4/2/2, with a minimum relevance of55 and an additional20-item overall ceiling.
 Scoring and summaries share the same complete abstract evidence up to12,000

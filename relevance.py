@@ -16,12 +16,13 @@ state, and how sensory cues are combined during navigation and decisions.
 PRIMARY INTERESTS (each is sufficient; do not require a paper to cover all):
 - Multimodal/multisensory hippocampal or entorhinal coding and integration.
 - Multisensory navigation, sensory cue combination, conflict and reliability.
-- Auditory-guided navigation: sound supports position, route, goal or spatial-map
-  representations. Behavioural work without hippocampal recordings is eligible.
+- Navigation or position/state inference supported by auditory cues, including
+  behavioural work without hippocampal recordings.
 - Auditory hippocampal/entorhinal coding, including non-spatial sound/frequency
   representations. This understudied direction deserves explicit priority.
-- Hippocampal sensory versus internally generated task-state, goal or action-plan
-  representations; experiments that distinguish these explanations.
+- Experiments distinguishing externally driven sensory activity from internally
+  generated task-state, goal or action-plan representations in hippocampal,
+  sensory or integration circuits.
 - Neural/computational mechanisms of evidence integration, latent-state inference,
   belief updating or causal inference that directly inform these questions.
 - Causal circuitry and analysis methods with a demonstrated, specific application
@@ -34,9 +35,9 @@ SCORE BY WHAT THE PAPER ACTUALLY TESTS AND ENABLES:
 - 70-84: Strong, concrete transferable insight into sensory/state/action coding,
   cue integration, latent-state computation, circuitry or relevant analyses.
 - 55-69: Useful conceptual background: general spatial codes, replay or memory
-  computations without a direct test of the primary questions. Human recognition
-  memory, novelty/familiarity and memory-mismatch signals generally belong here
-  unless the abstract establishes a more direct computational or experimental link.
+  computations without a direct test or demonstrated practical contribution to
+  the primary questions. Judge the actual contribution rather than treating any
+  task name or paper topic as a fixed score band.
 - 40-54: Peripheral background with a weak practical connection.
 - 0-39: Superficial overlap or unrelated work; generic clinical, molecular,
   developmental, anatomical or technique-only studies without a concrete link.
@@ -46,12 +47,13 @@ Hippocampus, CA1, representation, multimodal, Bayesian or navigation words alone
 never justify a high score. Multimodal imaging/data fusion is not evidence of
 multisensory neural integration. Distinguish sensory responses, memory comparison,
 inferred state, action plans and cue integration; do not equate them.
-Sound-source localisation or approaching a tone is not automatically a direct
-test of navigation, cognitive maps or inferred position. Generic auditory
-prediction, social-context modulation, motion-sickness relief and associative
-plasticity are normally background (55-69), unless the supplied findings give
-a specific experimental or analytical contribution to a primary question.
-A physiological network/theta state is not necessarily an inferred task state.
+A basic sensory localisation/discrimination task is not automatically a test of
+spatial maps, navigation or inferred position. It can be directly relevant when
+it tests cue integration, reliability, conflict or a mechanistic hypothesis that
+informs a primary question. Generic sensory prediction, contextual modulation
+or learning is background unless its demonstrated findings enable a specific
+experimental or analytical contribution. A physiological network state is not
+necessarily an inferred task state.
 To justify 70+, identify an actual manipulation, control, analysis or competing
 prediction the researcher could borrow. A generic analogy to context, prediction,
 sensory processing or action is insufficient. Score the demonstrated connection,
@@ -64,21 +66,6 @@ With no abstract, score conservatively from the title, cap at 69, and state the
 evidence limitation. An explicit primary topic can still be included for inspection.
 If evidence_truncated is true, acknowledge incomplete evidence; absence of results
 in this excerpt is not evidence that the complete abstract or paper has no results.
-
-OWNER-APPROVED CALIBRATION (illustrative ranges, not title-based overrides):
-- MEC visual/tactile deprivation: 90-95. Direct multisensory support of spatial
-  representations, but deprivation alone does not identify the integration rule.
-- V1 task-progress sequences in darkness, modulated by vision: 90-95. Strong
-  sensory-versus-internal representation dissociation despite being outside CA1.
-- Lizards approaching/localising a tone: 55-70. Interesting auditory spatial
-  behaviour; no demonstrated mapping/inference/integration mechanism. Species
-  is not the reason for this lower priority. Stronger findings could score higher.
-- Separating multisensory temporal recalibration from decision carryover: 75-85.
-- Auditory instructions versus prospective prefrontal/thalamic action coding: 75-85.
-- Anticipatory sound reducing motion sickness: 55-65.
-- Songbird courtship modulation of auditory feedback: 60-70.
-- Cochlear-nucleus attenuation of anticipated sounds: 65-75.
-Apply these distinctions to findings, not exact titles, prestige or keyword counts.
 
 Return score, reason, limitation and kind. reason must combine an established
 finding with a specific practical contribution (or explicitly say no direct
