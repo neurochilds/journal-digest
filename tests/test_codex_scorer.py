@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from codex_scorer import CodexScorer
+from relevance import SCORE_FIELDS
 
 
 class CodexTests(unittest.TestCase):
@@ -44,7 +45,7 @@ class CodexTests(unittest.TestCase):
         self.assertIn('read-only', self.command)
         self.assertIn('shell_tool', self.command)
         self.assertIn('untrusted data', self.prompt)
-        self.assertNotIn('x' * 2001, self.prompt)
+        self.assertIn('x' * 2400, self.prompt)
 
     def test_api_auth_is_rejected_before_execution(self):
         (self.home / 'auth.json').write_text(json.dumps({'auth_mode': 'apikey', 'OPENAI_API_KEY': 'test'}))
@@ -97,11 +98,12 @@ class CodexTests(unittest.TestCase):
                 self.request([])
             start.assert_not_called()
 
-    def test_batches_preserve_paper_mapping_and_input_limit(self):
+    def test_batches_preserve_paper_mapping_and_complete_abstract(self):
         papers = [dict(self.paper, title=str(i)) for i in range(23)]
         def request(instructions, batch, fields):
-            self.assertTrue(all(len(p['abstract']) == 1500 for p in batch))
-            return [{'score': 70, 'reason': p['title']} for p in batch]
+            self.assertTrue(all(len(p['abstract']) == 2400 for p in batch))
+            return [{'score': 70, 'reason': p['title'], 'limitation': 'No direct test.', 'kind': 'paper'}
+                    for p in batch]
         with patch.object(self.client, 'request', side_effect=request) as ask:
             self.client.score_many(papers, 'Rubric')
         self.assertEqual([len(c.args[1]) for c in ask.call_args_list], [10, 10, 3])
@@ -112,16 +114,59 @@ class CodexTests(unittest.TestCase):
             self.client.summarize_many([{'title': 'Missing', 'abstract': ''}])
             ask.assert_not_called()
 
+    def test_title_only_cannot_be_presented_as_direct_evidence(self):
+        paper = {'title': 'Auditory hippocampal navigation'}
+        with patch.object(self.client, 'request', return_value=[
+                {'score': 99, 'reason': 'Promising title.', 'limitation': 'No abstract.', 'kind': 'paper'}]):
+            self.client.score_many([paper], 'Rubric')
+        self.assertEqual(paper['llm_score'], 69)
+
     def test_successful_batches_checkpoint_before_later_failure(self):
         papers = [dict(self.paper, title=str(i)) for i in range(11)]
         checkpoint = Mock()
         with patch.object(self.client, 'request', side_effect=[
-                [{'score': 70, 'reason': 'Relevant'} for _ in range(10)], RuntimeError('limit')]):
+                [{'score': 70, 'reason': 'Relevant', 'limitation': 'No direct test.', 'kind': 'paper'}
+                 for _ in range(10)], RuntimeError('limit')]):
             with self.assertRaisesRegex(RuntimeError, 'limit'):
                 self.client.score_many(papers, 'Rubric', on_batch=checkpoint)
         checkpoint.assert_called_once()
         self.assertTrue(all(p.get('llm_score') == 70 for p in papers[:10]))
         self.assertNotIn('llm_score', papers[-1])
+
+    def test_score_and_summary_receive_identical_late_results(self):
+        paper = {'title': 'Rule selection', 'abstract': 'Background. ' * 180 + 'RESULT: silencing changed rule bias.'}
+        captured = []
+        def start(command, **kwargs):
+            process = Mock(returncode=0)
+            def communicate(prompt, timeout):
+                payload = json.loads(prompt.decode().rsplit('\n', 1)[-1])
+                captured.append(payload[0])
+                fields = json.loads(Path(command[command.index('--output-schema') + 1]).read_text())['properties']['results']['items']['properties']
+                row = ({'id': 0, 'score': 82, 'reason': 'Rule versus action control.',
+                        'limitation': 'No hippocampal recording.', 'kind': 'paper'} if 'score' in fields
+                       else {'id': 0, 'summary': 'Silencing changed rule bias.'})
+                Path(command[command.index('-o') + 1]).write_text(json.dumps({'results': [row]}))
+                kwargs['stdout'].write(b'{"type":"turn.completed"}\n')
+            process.communicate.side_effect = communicate
+            return process
+        with patch('codex_scorer.subprocess.Popen', side_effect=start):
+            self.client.score_many([paper], 'Rubric')
+            self.client.summarize_many([paper])
+        self.assertEqual(captured[0], captured[1])
+        self.assertTrue(captured[0]['abstract'].endswith('RESULT: silencing changed rule bias.'))
+
+    def test_invalid_resource_category_is_rejected(self):
+        def start(command, **kwargs):
+            process = Mock(returncode=0)
+            def communicate(prompt, timeout):
+                Path(command[command.index('-o') + 1]).write_text(json.dumps({'results': [
+                    {'id': 0, 'score': 74, 'reason': 'Data.', 'limitation': 'No results.', 'kind': 'unknown'}]}))
+                kwargs['stdout'].write(b'{"type":"turn.completed"}\n')
+            process.communicate.side_effect = communicate
+            return process
+        with patch('codex_scorer.subprocess.Popen', side_effect=start):
+            with self.assertRaisesRegex(RuntimeError, 'category'):
+                self.client.request('Rubric', [self.paper], SCORE_FIELDS)
 
 
 if __name__ == '__main__':
