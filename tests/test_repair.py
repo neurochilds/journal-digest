@@ -115,6 +115,12 @@ class PaginationTests(unittest.TestCase):
         self.assertEqual(self.get.call_args.kwargs['params']['per-page'], 100)
         self.assertEqual(self.get.call_args.kwargs['params']['cursor'], 'next')
 
+    def test_dataset_type_survives_retrieval(self):
+        self.get.return_value = {'results': [dict(self.work, type='dataset')], 'meta': {'next_cursor': None}}
+        papers = tracker.fetch_papers_from_openalex('2026-09-01', '2026-10-03')
+        self.assertEqual(papers[0]['work_type'], 'dataset')
+        self.assertIn('type', self.get.call_args.kwargs['params']['select'].split(','))
+
     def test_empty_terminal_page_is_valid(self):
         self.get.return_value = {'results': [], 'meta': {'next_cursor': None}}
         self.assertEqual(tracker.fetch_papers_from_openalex('2026-09-01', '2026-10-03'), [])
@@ -163,6 +169,10 @@ class RunTests(unittest.TestCase):
         self.client = self.stack.enter_context(patch.object(tracker, 'OpenAI'))
         self.fetch = self.stack.enter_context(patch.object(tracker, 'fetch_papers_from_openalex'))
         self.score = self.stack.enter_context(patch.object(tracker, 'get_llm_relevance_score', return_value=(95, 'Relevant.')))
+        def score(client, paper):
+            paper['llm_limitation'], paper['llm_kind'] = 'Abstract only.', 'paper'
+            return self.score.return_value
+        self.score.side_effect = score
         self.stack.enter_context(patch.object(tracker, 'summarize_paper', return_value='Summary.'))
         self.send = self.stack.enter_context(patch.object(tracker, 'send_email'))
         self.stack.enter_context(patch.object(tracker.time, 'sleep'))
@@ -175,6 +185,26 @@ class RunTests(unittest.TestCase):
     def test_default_uses_one_free_publication_overlap(self):
         self.assertEqual(tracker.main(fetch_only=True), 0)
         self.fetch.assert_called_once_with((datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d'), datetime.now().strftime('%Y-%m-%d'))
+
+    def test_email_score_is_ai_priority_without_keyword_penalty(self):
+        self.score.return_value = (93, 'Internal task representation modulated by vision.')
+        tracker.main()
+        html, text = self.send.call_args.args[1:]
+        self.assertIn('93/100', html)
+        self.assertIn('93/100', text)
+        self.assertNotIn('Keyword:', html)
+        self.assertIn('Direct relevance', html)
+
+    def test_background_overflow_is_deferred_without_marking_seen(self):
+        self.score.return_value = (62, 'Useful background.')
+        papers = [dict(self.paper, title=f'Hippocampal background {i}', link=f'https://doi.org/10.1/{i}')
+                  for i in range(5)]
+        self.fetch.side_effect = lambda *a, **kw: copy.deepcopy(papers)
+        tracker.main()
+        pending = tracker.load_pending_papers()
+        self.assertEqual(len(pending), 3)
+        seen = tracker.load_seen_papers()
+        self.assertTrue(all(tracker.get_paper_id(p) not in seen for p in pending))
 
     def test_explicit_window_is_preserved(self):
         tracker.main(start_date='2026-08-28', end_date='2026-10-03', fetch_only=True)
@@ -342,6 +372,19 @@ class RunTests(unittest.TestCase):
 
 
 class ScoringTests(unittest.TestCase):
+    def test_api_backend_uses_complete_same_evidence_for_both_stages(self):
+        client = Mock()
+        client.chat.completions.create.return_value = Mock(choices=[Mock(message=Mock(content=json.dumps(
+            {'score': 82, 'reason': 'Rule/action dissociation.', 'limitation': 'No navigation.', 'kind': 'paper'})))])
+        paper = {'title': 'Rule selection', 'abstract': 'Background. ' * 180 + 'FINAL FINDING'}
+        self.assertEqual(tracker.get_llm_relevance_score(client, paper)[0], 82)
+        score_prompt = client.chat.completions.create.call_args.kwargs['messages'][0]['content']
+        tracker.summarize_paper(client, paper)
+        summary_prompt = client.chat.completions.create.call_args.kwargs['messages'][0]['content']
+        self.assertIn(json.dumps(tracker.paper_evidence(paper)), score_prompt)
+        self.assertIn(json.dumps(tracker.paper_evidence(paper)), summary_prompt)
+        self.assertEqual(paper['llm_limitation'], 'No navigation.')
+
     def test_summary_error_omits_provider_details(self):
         client = Mock()
         client.chat.completions.create.side_effect = RuntimeError('provider credential details')

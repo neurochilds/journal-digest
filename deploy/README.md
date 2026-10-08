@@ -43,8 +43,13 @@ The validated worker model is `gpt-6.1-sol`, with reasoning explicitly set to
 requests establish this route with CLI 0.160.1. The older CLI 0.153.4 rejected
 the same model; its binary remains available for rollback.
 The shared [relevance rubric](../relevance.py) prioritises the confirmed sensory,
-navigation and state-coding interests. Thresholds, abstract lengths, recipient, search window,
-200-candidate ceiling and 20-paper email limit are preserved. New uncached
+navigation and state-coding interests, with owner-approved high V1/low simple
+sound-localisation examples. Final scores are AI-only; keywords remain discovery
+hints. Emails have direct, transferable, background and resource sections capped
+at 8/4/2/2, with a minimum relevance of55 and an additional20-item overall ceiling.
+Scoring and summaries share the same complete abstract evidence up to12,000
+characters; oversized inputs keep beginning/end and explicitly flag omission.
+Recipient, search window, schedule and200-candidate ceiling are preserved. New uncached
 scores use batches of ten abstracts, and selected summaries use batches of ten.
 Cached scores are valid only for the same rubric, model and scoring text;
 stale pending scores are rechecked without altering sent history. Successful scoring batches

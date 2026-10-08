@@ -1,6 +1,6 @@
 # Journal Digest (Neuroscience Paper Tracker)
 
-This repo runs a daily/weekly digest that scans neuroscience papers (OpenAlex by default), scores relevance with keywords + GPT, summarizes top papers, and emails a digest. It keeps track of previously seen papers in `seen_papers.json` so you don’t get duplicates.
+This repo runs a twice-weekly digest that scans neuroscience papers (OpenAlex by default), uses keywords for discovery, scores reading priority with AI, summarises selected papers, and emails a digest. It keeps track of previously seen papers in `seen_papers.json` so you don’t get duplicates.
 
 ## How It Runs (Umbrel)
 Production runs through `deploy/paper-scout.service` and `deploy/paper-scout.timer` on Umbrel. See [runtime and cutover details](deploy/README.md). Persistent history lives in `/var/lib/paper-scout`; the source repository retains the history snapshot from cutover. GitHub Actions is now for manual previews only.
@@ -23,6 +23,24 @@ work are eligible. Generic hippocampal memory/novelty work is background unless
 its findings establish a specific connection. Relevance notes explain both the
 finding and its practical connection or limitation. Scores measure reading
 priority, not study quality or certainty; screening uses abstracts, not full papers.
+
+The displayed score and final ranking use AI reading priority alone. Keyword
+counts help discovery and candidate selection, but cannot boost or penalise the
+final score. Owner-approved calibration keeps internal task representations in
+V1 high and simple sound-source localisation substantially lower; neither species
+nor brain region determines the score. Every recommendation requires a specific
+practical contribution and an explicit missing test or remaining alternative.
+
+Emails separate **Direct relevance** (85+; up to eight), **Transferable ideas**
+(70–84; up to four), **Background** (55–69; up to two), and **Resources**
+(datasets/software scoring 55+; up to two). These are maxima, not quotas: short
+digests are fine. Eligible overflow stays queued rather than being marked sent.
+Resources describe what they contain rather than claiming experimental findings.
+
+Scoring, summaries and cache identity use the same evidence payload: the complete
+abstract up to 12,000 characters, work type and an explicit truncation flag. Longer
+abstracts retain their beginning and ending with a labelled middle omission.
+This avoids silently scoring an introduction while summarising later results.
 
 The retrieval query includes auditory work. Explicit auditory/multisensory
 hippocampal and navigation candidates precede generic hippocampal titles at the
@@ -81,7 +99,7 @@ OpenAlex references: [authentication](https://help.openalex.org/api/authenticati
 
 ## What Gets Logged
 
-`digest_log.csv` is the permanent record: one row per paper that reached AI scoring, with the run date, title, journal, link, publication date, keyword score, AI score, combined score, whether it was emailed, and the AI's one-line reason. `seen_papers.json` is only a dedup index of opaque hashes - use the CSV to see what actually happened.
+`digest_log.csv` is the permanent record: one row per paper that reached AI scoring, with the run date, title, journal, link, publication date, keyword score, AI score, combined score, whether it was emailed, and the AI's one-line reason. New rows retain the legacy `combined_score` column but set it equal to AI reading priority; old weighted scores remain historical and are not rewritten. `seen_papers.json` is only a dedup index of opaque hashes - use the CSV to see what actually happened.
 
 - `first_observed.json` records when this tracker first observed a work, not when OpenAlex created it. Retrieval previews do not change it.
 - `pending_papers.json` retains candidates deferred by the AI/digest caps or failed delivery, including completed scores. Default runs also drain this queue after papers leave the publication overlap. Explicit backfills preserve queued work outside their requested window.
@@ -96,9 +114,9 @@ OpenAlex references: [authentication](https://help.openalex.org/api/authenticati
 | `PUBLICATION_OVERLAP_DAYS` | 60 | Wider publication window for default OpenAlex runs, catching some late deposits |
 | `MAX_LLM_CANDIDATES` | 200 | Cost ceiling on AI scoring. Truncation is now logged loudly |
 | `MIN_KEYWORD_SCORE` | 12 | Raw keyword score needed to become a candidate |
-| `MIN_LLM_SCORE` | 50 | Hard floor - the AI can veto a keyword-dense paper |
-| `MIN_COMBINED_SCORE` | 40 | Final threshold on the weighted score |
-| `KEYWORD_WEIGHT` | 0.3 | Keyword share of the combined score; AI gets the rest |
+| `MIN_LLM_SCORE` | 55 | Minimum judged reading relevance |
+| `DIGEST_SECTION_LIMITS` | 8 / 4 / 2 / 2 | Direct / transferable / background / resources maxima |
+| `MAX_PAPERS_PER_DIGEST` | 20 | Additional overall ceiling; default section limits allow at most 16 |
 | `SEEN_RETENTION_DAYS` | 365 | How long a paper stays suppressed as already seen |
 
 A paper with a core term in its **title** (hippocampal, entorhinal, theta, replay, remapping, multisensory, ...) is always ranked ahead of keyword-dense abstracts when the candidate cap bites.

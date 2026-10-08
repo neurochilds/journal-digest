@@ -131,19 +131,10 @@ KEYWORDS = {
 # Note: Single "spatial" match = 6, so 12+ requires multiple keyword hits
 MIN_KEYWORD_SCORE = 12
 
-# Stage 2: Minimum combined score to include in email.
-# Papers below this won't be emailed even if they passed the keyword filter.
-MIN_COMBINED_SCORE = 40
-
-# Hard floor on the AI relevance score. A paper the AI judges irrelevant is not
-# emailed no matter how many keywords its abstract happens to repeat - this is
-# what stops keyword-dense but off-topic papers padding the digest.
-#
-# Raised 40 -> 50 after the Feb/Mar backfill. This is the threshold to tune for
-# digest size: it cuts on judged relevance, whereas raising MIN_COMBINED_SCORE
-# would penalise papers that simply have no abstract in OpenAlex (they are stuck
-# at a keyword score of ~20 however relevant they are).
-MIN_LLM_SCORE = 50
+# Judged reading relevance is the only final score; keywords are retrieval hints.
+MIN_LLM_SCORE = 55
+DIGEST_SECTION_LIMITS = {'Direct relevance': 8, 'Transferable ideas': 4,
+                         'Background': 2, 'Resources': 2}
 
 # How many days back to check for papers.
 # The workflow runs Mon + Thu, but a 3-day window meant any paper OpenAlex
@@ -162,11 +153,6 @@ MAX_PAPERS_PER_DIGEST = 20
 # relevance filter. It was 40 and saturated on nearly every run since February,
 # silently discarding everything below the cut.
 MAX_LLM_CANDIDATES = 200
-
-# Weight of the keyword score in the final combined score; the remainder goes to
-# the AI relevance score. The raw keyword count rewards long keyword-dense
-# abstracts, so it gets the smaller share.
-KEYWORD_WEIGHT = 0.3
 
 # How long a paper stays suppressed as "already seen".
 SEEN_RETENTION_DAYS = 365
