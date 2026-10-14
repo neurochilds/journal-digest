@@ -59,7 +59,8 @@ class CodexScorer:
             raise RuntimeError('Codex screening time budget exhausted; candidates remain pending')
         schema = {'type': 'object', 'additionalProperties': False,
                   'required': ['results'], 'properties': {'results': {
-                      'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
+                      'type': 'array', 'minItems': len(papers), 'maxItems': len(papers),
+                      'items': {'type': 'object', 'additionalProperties': False,
                       'required': ['id', *fields], 'properties': {'id': {'type': 'integer'}, **fields}}}}}
         payload = [dict(paper_evidence(p), id=i)
                    for i, p in enumerate(papers)]
