@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from codex_scorer import CodexScorer
+from codex_scorer import CodexScorer, CodexScreeningError, provider_failure
 from relevance import SCORE_FIELDS
 
 
@@ -90,6 +90,30 @@ class CodexTests(unittest.TestCase):
     def test_provider_failure_does_not_return_partial_or_fall_back(self):
         with self.assertRaisesRegex(RuntimeError, 'account access or usage limits'):
             self.request([{'id': 0, 'score': 75, 'reason': 'R'}], returncode=1)
+
+    def test_provider_diagnostics_expose_only_fixed_categories(self):
+        path = self.home / 'provider-error'
+        for detail, expected in (
+                ('refresh_token_reused token=private-test-secret; usage: 100', 'authentication'),
+                ('usage_limit_reached private-test-secret', 'usage_limit'),
+                ('model_not_found private-test-secret', 'model_unavailable'),
+                ('unrecognised failure private-test-secret', 'provider_error')):
+            with self.subTest(expected=expected):
+                path.write_text(detail)
+                error = provider_failure([path])
+                self.assertIsInstance(error, CodexScreeningError)
+                self.assertEqual(error.code, expected)
+                self.assertNotIn('private-test-secret', str(error))
+
+    def test_timeout_kills_child_and_reports_safe_category(self):
+        import subprocess
+        process = Mock()
+        process.communicate.side_effect = [subprocess.TimeoutExpired('codex', 120), None]
+        with patch('codex_scorer.subprocess.Popen', return_value=process):
+            with self.assertRaises(CodexScreeningError) as caught:
+                self.client.request('Rubric', [self.paper], {'score': {'type': 'integer'}})
+        self.assertEqual(caught.exception.code, 'timeout')
+        process.kill.assert_called_once()
 
     def test_shared_deadline_stops_new_calls(self):
         self.client.deadline = 0

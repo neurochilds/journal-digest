@@ -12,9 +12,41 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from deploy.encrypt_credentials import CONTEXT, KEYS, encrypt
 from deploy.run_scout import guarded_delivery, RedactedStream
+from deploy import run_scout
+from codex_scorer import CodexScreeningError
 
 
 class MigrationTests(unittest.TestCase):
+    def test_failed_run_replaces_stale_success_without_erasing_delivery_guard(self):
+        import io, os, sys
+        for uncertain in (False, True):
+            with self.subTest(uncertain=uncertain), tempfile.TemporaryDirectory() as root:
+                state = Path(root) / 'state'; state.mkdir()
+                credentials = Path(root) / 'credentials.json'
+                credentials.write_text(json.dumps({name: 'dummy-'+name for name in KEYS}))
+                for name in run_scout.STATE_FILES: (state/name).write_text('original-history')
+                (state/'last-run.json').write_text('{"exit_code": 0}')
+                def fail(**kwargs):
+                    if uncertain:
+                        (state/'delivery-guard.json').write_text('{"state": "uncertain"}')
+                        raise TimeoutError('private-test-secret')
+                    raise CodexScreeningError('authentication')
+                output = io.StringIO()
+                with patch.dict(os.environ, {'PAPER_SCOUT_AI_BACKEND': 'codex'}), \
+                     patch.object(sys, 'argv', ['scout', '--state', str(state), '--credentials', str(credentials)]), \
+                     patch.object(sys, 'stdout', output), patch.object(sys, 'stderr', output), \
+                     patch('paper_tracker.main', side_effect=fail):
+                    with self.assertRaises((CodexScreeningError, TimeoutError)): run_scout.main()
+                proof = json.loads((state/'last-run.json').read_text())
+                self.assertEqual(proof['exit_code'], 1)
+                self.assertEqual(proof['failure_code'], 'runtime_error' if uncertain else 'authentication')
+                self.assertEqual(proof['delivery_requires_reconciliation'], uncertain)
+                self.assertEqual((state/'delivery-guard.json').exists(), uncertain)
+                self.assertNotIn('private-test-secret', output.getvalue())
+                self.assertNotIn('private-test-secret', json.dumps(proof))
+                for name in run_scout.STATE_FILES:
+                    self.assertEqual((state/name).read_text(), 'original-history')
+
     def test_credentials_are_redacted_across_stream_writes(self):
         import io
         target = io.StringIO()

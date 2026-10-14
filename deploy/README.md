@@ -38,6 +38,13 @@ over SSH using the documented Codex headless-auth flow; they never enter Git,
 source archives, Actions, preview output or history backups. Codex owns token
 refresh in this directory. Reauthentication may eventually be required.
 
+Use a separate device-code login for this worker rather than repeatedly copying
+an actively used desktop session. A copied refresh token can be consumed elsewhere
+and leave the worker unable to renew it (`refresh_token_reused`). Authenticate
+into a private temporary `CODEX_HOME` with `codex login --device-auth`, validate
+scoring there, then install its auth file privately while the service is inactive.
+Never print authentication files or provider diagnostics.
+
 The validated worker model is `gpt-6.1-sol`, with reasoning explicitly set to
 `medium` for scoring and summaries. The authenticated worker catalog and live
 requests establish this route with CLI 0.160.1. The older CLI 0.153.4 rejected
@@ -64,6 +71,10 @@ directory, using an isolated environment with no mail or API credentials.
 Quota/authentication/invalid-output failures leave candidates pending and send
 no digest. No automatic fallback to paid API calls is permitted. The legacy
 API backend remains available only when explicitly selected outside this unit.
+Known provider failures are logged as fixed categories (authentication, usage
+limit, model unavailable, network or timeout), without raw provider output.
+Tracker exceptions replace `last-run.json` with a failed result and current
+delivery-reconciliation status; an older successful run must not mask a failure.
 
 All four state files are copied into a private snapshot before each real run.
 No backup pruning is enabled. A file lock prevents concurrent worker runs.
