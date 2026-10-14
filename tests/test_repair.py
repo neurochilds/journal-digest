@@ -213,6 +213,22 @@ class RunTests(unittest.TestCase):
         self.assertEqual(tracker.main(), 0)
         self.send.assert_not_called()
 
+    def test_broader_integration_overflow_stays_pending_and_unseen(self):
+        def integration(client, paper):
+            paper.update(llm_limitation='General integration.', llm_kind='paper', llm_fit='broader_integration')
+            return 75, 'Demonstrated audiovisual interaction.'
+        self.score.side_effect = integration
+        papers = [dict(self.paper, title=f'Audiovisual integration {i}', link=f'https://doi.org/10.1/{i}')
+                  for i in range(3)]
+        self.fetch.side_effect = lambda *a, **kw: copy.deepcopy(papers)
+        self.assertEqual(tracker.main(), 0)
+        self.send.assert_called_once()
+        self.assertIn('Multisensory integration', self.send.call_args.args[1])
+        pending = tracker.load_pending_papers()
+        self.assertEqual(len(pending), 1)
+        seen = tracker.load_seen_papers()
+        self.assertNotIn(tracker.get_paper_id(pending[0]), seen)
+
     def test_explicit_window_is_preserved(self):
         tracker.main(start_date='2026-08-28', end_date='2026-10-03', fetch_only=True)
         self.fetch.assert_called_once_with('2026-08-28', '2026-10-03')

@@ -92,6 +92,40 @@ class RelevanceTests(unittest.TestCase):
             with self.assertRaises(ValueError): load_research_profile(path)
             with self.assertRaises(FileNotFoundError): load_research_profile(Path(root)/'missing')
 
+    def test_broader_integration_has_own_threshold_and_retains_evidence_gates(self):
+        paper = {'title': 'Cortical integration', 'abstract': 'Evidence ' * 20,
+                 'llm_score': 70, 'llm_fit': 'broader_integration', 'llm_kind': 'paper'}
+        self.assertTrue(digest_eligible(paper, 80, 70))
+        self.assertFalse(digest_eligible(paper, 80, 71))
+        for change in ({'llm_score': 69}, {'llm_fit': 'adjacent'}, {'llm_kind': 'resource'},
+                       {'work_type': 'dataset'}, {'abstract': ''}):
+            with self.subTest(change=change):
+                self.assertFalse(digest_eligible(paper | change, 80, 70))
+        self.assertEqual(reading_score(paper, 95, 'broader_integration'), 79)
+        self.assertEqual(reading_score(paper | {'abstract': ''}, 95, 'broader_integration'), 69)
+
+    def test_broader_integration_capacity_cannot_displace_core_and_overflow_is_retained(self):
+        core = {'title': 'Navigation', 'llm_score': 80, 'llm_fit': 'core'}
+        broader = [{'title': f'Integration {i}', 'llm_score': 79 - i,
+                    'llm_fit': 'broader_integration'} for i in range(3)]
+        selected, deferred = select_digest(broader + [core], tracker.DIGEST_SECTION_LIMITS, 20)
+        self.assertEqual(selected, [core] + broader[:2])
+        self.assertEqual(deferred, broader[2:])
+        selected, deferred = select_digest(broader + [core], tracker.DIGEST_SECTION_LIMITS, 1)
+        self.assertEqual(selected, [core])
+        self.assertEqual(deferred, broader)
+
+    def test_integration_email_section_is_distinct_from_primary_and_background(self):
+        paper = {'title': 'Cortical integration', 'llm_score': 75, 'llm_fit': 'broader_integration',
+                 'llm_kind': 'paper', 'abstract': 'Evidence ' * 20, 'journal': 'Journal',
+                 'link': 'https://example.org', 'date': tracker.datetime.now(),
+                 'summary': 'Crossmodal interaction.', 'llm_reason': 'Integration.',
+                 'llm_limitation': 'Abstract only.'}
+        for render in (tracker.format_email_html, tracker.format_email_text):
+            output = render([paper])
+            self.assertIn('multisensory integration', output.lower())
+            self.assertNotIn('direct relevance', output.lower())
+
     def test_resource_is_separate_from_experimental_findings(self):
         dataset = {'title': 'CrossModal Study', 'llm_score': 74, 'llm_kind': 'resource',
                    'abstract': 'Dataset.', 'journal': 'Repository', 'link': 'https://example.org',

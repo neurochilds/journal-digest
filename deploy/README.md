@@ -52,9 +52,11 @@ the same model; its binary remains available for rollback.
 The shared [relevance rubric](../relevance.py) prioritises the confirmed sensory,
 navigation and state-coding interests through general experimental and practical
 criteria, without paper-specific examples or prescribed scores. Final scores are AI-only; keywords remain discovery
-hints. Automatic email requires core question-level fit, a usable abstract, a
-research-paper classification and score80+, with at most eight papers. Adjacent,
-background and resource sections have zero automatic-email capacity. A short
+hints. Automatic email requires a usable abstract and research-paper classification.
+Up to eight core papers scoring80+ take priority. A separate Multisensory integration
+section allows up to two broader integration papers scoring70+ (capped79), including
+audiovisual integration in cortex without requiring navigation or hippocampus.
+Other adjacent, background and resource sections have zero automatic-email capacity. A short
 or empty digest is acceptable; no qualifying papers means no email.
 
 The wrapper requires `/var/lib/paper-scout/research-profile.md`, owned privately

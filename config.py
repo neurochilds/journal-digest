@@ -131,9 +131,10 @@ KEYWORDS = {
 # Note: Single "spatial" match = 6, so 12+ requires multiple keyword hits
 MIN_KEYWORD_SCORE = 12
 
-# Core question-level fit and evidence are required; keywords are retrieval hints.
+# Primary fit takes priority; broader multisensory integration has limited slots.
 MIN_LLM_SCORE = 80
-DIGEST_SECTION_LIMITS = {'Direct relevance': 8, 'Transferable ideas': 0,
+MIN_INTEGRATION_SCORE = 70
+DIGEST_SECTION_LIMITS = {'Direct relevance': 8, 'Multisensory integration': 2, 'Transferable ideas': 0,
                          'Background': 0, 'Resources': 0}
 
 # How many days back to check for papers.
