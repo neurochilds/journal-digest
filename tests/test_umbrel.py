@@ -17,11 +17,28 @@ from codex_scorer import CodexScreeningError
 
 
 class MigrationTests(unittest.TestCase):
+    def test_native_scoring_without_private_profile_stops_before_tracker(self):
+        import io, os, sys
+        with tempfile.TemporaryDirectory() as root:
+            state = Path(root)/'state'
+            credentials = Path(root)/'credentials.json'
+            credentials.write_text(json.dumps({name: 'dummy-'+name for name in KEYS}))
+            output = io.StringIO()
+            with patch.dict(os.environ, {'PAPER_SCOUT_AI_BACKEND': 'codex',
+                                         'PAPER_SCOUT_PROFILE_FILE': str(state/'missing.md')}), \
+                 patch.object(sys, 'argv', ['scout', '--state', str(state), '--credentials', str(credentials)]), \
+                 patch.object(sys, 'stdout', output), patch.object(sys, 'stderr', output), \
+                 patch('paper_tracker.main') as tracker:
+                with self.assertRaisesRegex(RuntimeError, 'Private research profile'):
+                    run_scout.main()
+                tracker.assert_not_called()
+
     def test_failed_run_replaces_stale_success_without_erasing_delivery_guard(self):
         import io, os, sys
         for uncertain in (False, True):
             with self.subTest(uncertain=uncertain), tempfile.TemporaryDirectory() as root:
                 state = Path(root) / 'state'; state.mkdir()
+                (state/'research-profile.md').write_text('Private fixture research context.')
                 credentials = Path(root) / 'credentials.json'
                 credentials.write_text(json.dumps({name: 'dummy-'+name for name in KEYS}))
                 for name in run_scout.STATE_FILES: (state/name).write_text('original-history')

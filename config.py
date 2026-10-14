@@ -131,10 +131,10 @@ KEYWORDS = {
 # Note: Single "spatial" match = 6, so 12+ requires multiple keyword hits
 MIN_KEYWORD_SCORE = 12
 
-# Judged reading relevance is the only final score; keywords are retrieval hints.
-MIN_LLM_SCORE = 55
-DIGEST_SECTION_LIMITS = {'Direct relevance': 8, 'Transferable ideas': 4,
-                         'Background': 2, 'Resources': 2}
+# Core question-level fit and evidence are required; keywords are retrieval hints.
+MIN_LLM_SCORE = 80
+DIGEST_SECTION_LIMITS = {'Direct relevance': 8, 'Transferable ideas': 0,
+                         'Background': 0, 'Resources': 0}
 
 # How many days back to check for papers.
 # The workflow runs Mon + Thu, but a 3-day window meant any paper OpenAlex

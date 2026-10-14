@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from relevance import RELEVANCE_VERSION, SCORE_FIELDS, paper_evidence, score_input
+from relevance import RELEVANCE_VERSION, SCORE_FIELDS, paper_evidence, score_input, reading_score
 
 
 class CodexScreeningError(RuntimeError):
@@ -144,11 +144,12 @@ class CodexScorer:
             batch = papers[offset:offset + self.batch_size]
             rows = self.request(rubric, batch, SCORE_FIELDS)
             for paper, row in zip(batch, rows):
-                score = row['score'] if paper.get('abstract') else min(row['score'], 69)
+                score = reading_score(paper, row['score'], row['fit'])
                 self.scores[self.key(paper)] = (score, row['reason'].strip())
                 paper['llm_score'], paper['llm_reason'] = self.scores[self.key(paper)]
                 paper['llm_limitation'] = row['limitation'].strip()
                 paper['llm_kind'] = row['kind']
+                paper['llm_fit'] = row['fit']
                 paper['llm_model'] = self.model
                 paper['llm_rubric'] = RELEVANCE_VERSION
                 paper['llm_input'] = score_input(paper)

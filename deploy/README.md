@@ -52,8 +52,16 @@ the same model; its binary remains available for rollback.
 The shared [relevance rubric](../relevance.py) prioritises the confirmed sensory,
 navigation and state-coding interests through general experimental and practical
 criteria, without paper-specific examples or prescribed scores. Final scores are AI-only; keywords remain discovery
-hints. Emails have direct, transferable, background and resource sections capped
-at 8/4/2/2, with a minimum relevance of55 and an additional20-item overall ceiling.
+hints. Automatic email requires core question-level fit, a usable abstract, a
+research-paper classification and score80+, with at most eight papers. Adjacent,
+background and resource sections have zero automatic-email capacity. A short
+or empty digest is acceptable; no qualifying papers means no email.
+
+The wrapper requires `/var/lib/paper-scout/research-profile.md`, owned privately
+by paperscout and kept outside Git/source archives (override with
+`PAPER_SCOUT_PROFILE_FILE`). Its contents enter every scoring batch and the
+rubric/cache identity. Missing/empty context fails closed; changing it rescreens
+pending candidates without resetting sent history. No raw profile is logged.
 Scoring and summaries share the same complete abstract evidence up to12,000
 characters; oversized inputs keep beginning/end and explicitly flag omission.
 Recipient, search window, schedule and200-candidate ceiling are preserved. New uncached

@@ -32,11 +32,19 @@ brain region, paper title nor a previous digest determines the score. The prompt
 contains no paper-specific examples or prescribed paper scores. Every recommendation requires a specific
 practical contribution and an explicit missing test or remaining alternative.
 
-Emails separate **Direct relevance** (85+; up to eight), **Transferable ideas**
-(70–84; up to four), **Background** (55–69; up to two), and **Resources**
-(datasets/software scoring 55+; up to two). These are maxima, not quotas: short
-digests are fine. Eligible overflow stays queued rather than being marked sent.
-Resources describe what they contain rather than claiming experimental findings.
+Automatic email now requires a **core** question-level connection, a usable
+abstract, a research-paper classification and reading relevance of at least80.
+It contains at most eight directly relevant papers. Adjacent/background papers
+and datasets do not fill email slots, even if their numeric scores are high.
+A short or empty digest is acceptable; no qualifying papers means no email.
+Eligible overflow stays queued rather than being marked sent.
+
+The native scorer requires a private project brief at
+`/var/lib/paper-scout/research-profile.md` (override with `PAPER_SCOUT_PROFILE_FILE`).
+It receives this brief with every scoring batch. Keep unpublished project details
+out of this public repository. The rubric/cache hash includes the complete brief,
+so changing the project context invalidates pending scores. Missing or empty
+native context stops scoring rather than silently using a generic profile.
 
 Scoring, summaries and cache identity use the same evidence payload: the complete
 abstract up to 12,000 characters, work type and an explicit truncation flag. Longer
@@ -115,9 +123,9 @@ OpenAlex references: [authentication](https://help.openalex.org/api/authenticati
 | `PUBLICATION_OVERLAP_DAYS` | 60 | Wider publication window for default OpenAlex runs, catching some late deposits |
 | `MAX_LLM_CANDIDATES` | 200 | Cost ceiling on AI scoring. Truncation is now logged loudly |
 | `MIN_KEYWORD_SCORE` | 12 | Raw keyword score needed to become a candidate |
-| `MIN_LLM_SCORE` | 55 | Minimum judged reading relevance |
-| `DIGEST_SECTION_LIMITS` | 8 / 4 / 2 / 2 | Direct / transferable / background / resources maxima |
-| `MAX_PAPERS_PER_DIGEST` | 20 | Additional overall ceiling; default section limits allow at most 16 |
+| `MIN_LLM_SCORE` | 80 | Minimum score after core-fit and evidence gates |
+| `DIGEST_SECTION_LIMITS` | 8 / 0 / 0 / 0 | Direct / transferable / background / resources maxima |
+| `MAX_PAPERS_PER_DIGEST` | 20 | Additional overall ceiling; default section limits allow at most eight |
 | `SEEN_RETENTION_DAYS` | 365 | How long a paper stays suppressed as already seen |
 
 A paper with a core term in its **title** (hippocampal, entorhinal, theta, replay, remapping, multisensory, ...) is always ranked ahead of keyword-dense abstracts when the candidate cap bites.

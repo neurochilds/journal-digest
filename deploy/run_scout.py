@@ -88,6 +88,10 @@ def main():
         for key in ('OPENAI_API_KEY', 'CODEX_API_KEY'):
             os.environ.pop(key, None)
     os.environ['PAPER_SCOUT_STATE_DIR'] = str(args.state.resolve())
+    if backend == 'codex' and not (args.probe or args.fetch_only):
+        os.environ.setdefault('PAPER_SCOUT_PROFILE_FILE', str(args.state/'research-profile.md'))
+        if not Path(os.environ['PAPER_SCOUT_PROFILE_FILE']).is_file():
+            raise RuntimeError('Private research profile is required for the native scorer')
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     import paper_tracker as tracker
     args.state.mkdir(mode=0o700, parents=True, exist_ok=True)
