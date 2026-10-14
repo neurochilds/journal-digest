@@ -118,10 +118,20 @@ def main():
             for name in STATE_FILES:
                 if (args.state/name).exists(): shutil.copy2(args.state/name, snapshot/name)
             tracker.send_email = guarded_delivery(marker, tracker.send_email)
-        result = tracker.main(historical=True, dry_run=preview, fetch_only=args.fetch_only,
-                              days_override=1 if args.preview else None,
-                              max_llm_candidates=1 if args.preview else None,
-                              preview_file=args.state/'preview.html' if preview else None)
+        try:
+            result = tracker.main(historical=True, dry_run=preview, fetch_only=args.fetch_only,
+                                  days_override=1 if args.preview else None,
+                                  max_llm_candidates=1 if args.preview else None,
+                                  preview_file=args.state/'preview.html' if preview else None)
+        except Exception as error:
+            from codex_scorer import CodexScreeningError
+            code = error.code if isinstance(error, CodexScreeningError) else 'runtime_error'
+            atomic(args.state/'last-run.json', {
+                'checked_at': datetime.now(timezone.utc).isoformat(), 'exit_code': 1,
+                'preview': preview, 'delivery_requires_reconciliation': marker.exists(),
+                'failure_code': code, 'error_type': type(error).__name__})
+            print('Paper scout failed: '+code, file=sys.stderr)
+            raise
         if result == 0 and not preview:
             marker.unlink(missing_ok=True)
         if preview:

@@ -8,6 +8,38 @@ from pathlib import Path
 from relevance import RELEVANCE_VERSION, SCORE_FIELDS, paper_evidence, score_input
 
 
+class CodexScreeningError(RuntimeError):
+    """Fixed public diagnostics; provider output must never reach logs."""
+    messages = {
+        'authentication': 'Codex login needs renewal; candidates remain pending',
+        'usage_limit': 'Codex usage limit reached; candidates remain pending',
+        'model_unavailable': 'Configured Codex model unavailable; candidates remain pending',
+        'network': 'Codex connection failed; candidates remain pending',
+        'timeout': 'Codex screening timed out; candidates remain pending',
+        'provider_error': 'Codex screening failed; check account access or usage limits',
+    }
+
+    def __init__(self, code):
+        self.code = code if code in self.messages else 'provider_error'
+        super().__init__(self.messages[self.code])
+
+
+def provider_failure(paths):
+    # Inspect bounded private output only to select a fixed diagnostic category.
+    text = '\n'.join(p.read_bytes()[:65536].decode(errors='replace') for p in paths).lower()
+    categories = {
+        'authentication': ('refresh_token_reused', 'refresh_token_expired', 'invalid_grant',
+                           'token has expired', '401 unauthorized'),
+        'usage_limit': ('usage_limit_reached', 'insufficient_quota', 'rate_limit_exceeded',
+                        "you've hit your usage limit", 'status code 429', 'http 429'),
+        'model_unavailable': ('model_not_found', 'model is not supported', 'unsupported model'),
+        'network': ('connection refused', 'dns error', 'unable to connect'),
+    }
+    code = next((code for code, terms in categories.items() if any(t in text for t in terms)),
+                'provider_error')
+    return CodexScreeningError(code)
+
+
 class CodexScorer:
     batch_size = 10
 
@@ -60,9 +92,9 @@ class CodexScorer:
                     process.communicate(prompt.encode(), timeout=min(120, remaining))
                 except subprocess.TimeoutExpired:
                     process.kill(); process.communicate()
-                    raise RuntimeError('Codex screening timed out; candidates remain pending') from None
+                    raise CodexScreeningError('timeout') from None
             if process.returncode or not result_path.exists():
-                raise RuntimeError('Codex screening failed; check account access or usage limits')
+                raise provider_failure([root / 'events', root / 'errors'])
             if any(p.stat().st_size > 2_000_000 for p in root.iterdir() if p.is_file()):
                 raise RuntimeError('Codex output exceeded limit')
             for line in (root / 'events').read_text().splitlines():
