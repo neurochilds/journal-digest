@@ -170,7 +170,7 @@ class RunTests(unittest.TestCase):
         self.fetch = self.stack.enter_context(patch.object(tracker, 'fetch_papers_from_openalex'))
         self.score = self.stack.enter_context(patch.object(tracker, 'get_llm_relevance_score', return_value=(95, 'Relevant.')))
         def score(client, paper):
-            paper['llm_limitation'], paper['llm_kind'] = 'Abstract only.', 'paper'
+            paper['llm_limitation'], paper['llm_kind'], paper['llm_fit'] = 'Abstract only.', 'paper', 'core'
             return self.score.return_value
         self.score.side_effect = score
         self.stack.enter_context(patch.object(tracker, 'summarize_paper', return_value='Summary.'))
@@ -195,16 +195,23 @@ class RunTests(unittest.TestCase):
         self.assertNotIn('Keyword:', html)
         self.assertIn('Direct relevance', html)
 
-    def test_background_overflow_is_deferred_without_marking_seen(self):
+    def test_background_only_run_does_not_send_filler_email(self):
         self.score.return_value = (62, 'Useful background.')
         papers = [dict(self.paper, title=f'Hippocampal background {i}', link=f'https://doi.org/10.1/{i}')
                   for i in range(5)]
         self.fetch.side_effect = lambda *a, **kw: copy.deepcopy(papers)
         tracker.main()
         pending = tracker.load_pending_papers()
-        self.assertEqual(len(pending), 3)
-        seen = tracker.load_seen_papers()
-        self.assertTrue(all(tracker.get_paper_id(p) not in seen for p in pending))
+        self.assertEqual(len(pending), 0)
+        self.send.assert_not_called()
+
+    def test_high_numeric_score_with_indirect_fit_does_not_send(self):
+        def indirect(client, paper):
+            paper.update(llm_limitation='Indirect only.', llm_kind='paper', llm_fit='adjacent')
+            return 95, 'A generic method could be borrowed.'
+        self.score.side_effect = indirect
+        self.assertEqual(tracker.main(), 0)
+        self.send.assert_not_called()
 
     def test_explicit_window_is_preserved(self):
         tracker.main(start_date='2026-08-28', end_date='2026-10-03', fetch_only=True)
@@ -372,10 +379,19 @@ class RunTests(unittest.TestCase):
 
 
 class ScoringTests(unittest.TestCase):
+    def test_api_core_fit_gate_caps_adjacent_score(self):
+        client = Mock()
+        client.chat.completions.create.return_value = Mock(choices=[Mock(message=Mock(content=json.dumps(
+            {'score': 96, 'reason': 'Generic analysis.', 'limitation': 'Indirect.', 'kind': 'paper',
+             'fit': 'adjacent'})))])
+        paper = {'title': 'Generic method', 'abstract': 'Available evidence. ' * 10}
+        self.assertEqual(tracker.get_llm_relevance_score(client, paper)[0], 79)
+        self.assertFalse(tracker.digest_eligible(paper | {'llm_score': 96}, 80))
+
     def test_api_backend_uses_complete_same_evidence_for_both_stages(self):
         client = Mock()
         client.chat.completions.create.return_value = Mock(choices=[Mock(message=Mock(content=json.dumps(
-            {'score': 82, 'reason': 'Rule/action dissociation.', 'limitation': 'No navigation.', 'kind': 'paper'})))])
+            {'score': 82, 'reason': 'Rule/action dissociation.', 'limitation': 'No navigation.', 'kind': 'paper', 'fit': 'core'})))])
         paper = {'title': 'Rule selection', 'abstract': 'Background. ' * 180 + 'FINAL FINDING'}
         self.assertEqual(tracker.get_llm_relevance_score(client, paper)[0], 82)
         score_prompt = client.chat.completions.create.call_args.kwargs['messages'][0]['content']

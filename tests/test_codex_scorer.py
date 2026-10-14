@@ -126,7 +126,7 @@ class CodexTests(unittest.TestCase):
         papers = [dict(self.paper, title=str(i)) for i in range(23)]
         def request(instructions, batch, fields):
             self.assertTrue(all(len(p['abstract']) == 2400 for p in batch))
-            return [{'score': 70, 'reason': p['title'], 'limitation': 'No direct test.', 'kind': 'paper'}
+            return [{'score': 70, 'reason': p['title'], 'limitation': 'No direct test.', 'kind': 'paper', 'fit': 'core'}
                     for p in batch]
         with patch.object(self.client, 'request', side_effect=request) as ask:
             self.client.score_many(papers, 'Rubric')
@@ -141,7 +141,7 @@ class CodexTests(unittest.TestCase):
     def test_title_only_cannot_be_presented_as_direct_evidence(self):
         paper = {'title': 'Auditory hippocampal navigation'}
         with patch.object(self.client, 'request', return_value=[
-                {'score': 99, 'reason': 'Promising title.', 'limitation': 'No abstract.', 'kind': 'paper'}]):
+                {'score': 99, 'reason': 'Promising title.', 'limitation': 'No abstract.', 'kind': 'paper', 'fit': 'core'}]):
             self.client.score_many([paper], 'Rubric')
         self.assertEqual(paper['llm_score'], 69)
 
@@ -149,7 +149,7 @@ class CodexTests(unittest.TestCase):
         papers = [dict(self.paper, title=str(i)) for i in range(11)]
         checkpoint = Mock()
         with patch.object(self.client, 'request', side_effect=[
-                [{'score': 70, 'reason': 'Relevant', 'limitation': 'No direct test.', 'kind': 'paper'}
+                [{'score': 70, 'reason': 'Relevant', 'limitation': 'No direct test.', 'kind': 'paper', 'fit': 'core'}
                  for _ in range(10)], RuntimeError('limit')]):
             with self.assertRaisesRegex(RuntimeError, 'limit'):
                 self.client.score_many(papers, 'Rubric', on_batch=checkpoint)
@@ -167,7 +167,7 @@ class CodexTests(unittest.TestCase):
                 captured.append(payload[0])
                 fields = json.loads(Path(command[command.index('--output-schema') + 1]).read_text())['properties']['results']['items']['properties']
                 row = ({'id': 0, 'score': 82, 'reason': 'Rule versus action control.',
-                        'limitation': 'No hippocampal recording.', 'kind': 'paper'} if 'score' in fields
+                        'limitation': 'No hippocampal recording.', 'kind': 'paper', 'fit': 'core'} if 'score' in fields
                        else {'id': 0, 'summary': 'Silencing changed rule bias.'})
                 Path(command[command.index('-o') + 1]).write_text(json.dumps({'results': [row]}))
                 kwargs['stdout'].write(b'{"type":"turn.completed"}\n')
@@ -184,7 +184,7 @@ class CodexTests(unittest.TestCase):
             process = Mock(returncode=0)
             def communicate(prompt, timeout):
                 Path(command[command.index('-o') + 1]).write_text(json.dumps({'results': [
-                    {'id': 0, 'score': 74, 'reason': 'Data.', 'limitation': 'No results.', 'kind': 'unknown'}]}))
+                    {'id': 0, 'score': 74, 'reason': 'Data.', 'limitation': 'No results.', 'kind': 'unknown', 'fit': 'core'}]}))
                 kwargs['stdout'].write(b'{"type":"turn.completed"}\n')
             process.communicate.side_effect = communicate
             return process

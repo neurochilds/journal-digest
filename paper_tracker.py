@@ -19,7 +19,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from pathlib import Path
 from relevance import (RELEVANCE_RULES, RELEVANCE_VERSION, current_score, score_input,
-                       paper_evidence, digest_sections, select_digest)
+                       paper_evidence, digest_sections, select_digest, reading_score, digest_eligible)
 import time
 import csv
 from urllib.parse import quote
@@ -546,7 +546,7 @@ def relevance_prompt(paper: dict) -> str:
             + json.dumps(paper_evidence(paper)) + '\n'
             'Respond with ONLY a JSON object, no markdown: '
             '{"score": <0-100>, "reason": "<finding and specific practical contribution>", '
-            '"limitation": "<missing test or remaining alternative>", "kind": "paper|resource"}')
+            '"limitation": "<missing test or remaining alternative>", "kind": "paper|resource", "fit": "core|adjacent|out_of_scope"}')
 
 
 def get_llm_relevance_score(client: OpenAI, paper: dict) -> tuple[int, str]:
@@ -579,14 +579,15 @@ def get_llm_relevance_score(client: OpenAI, paper: dict) -> tuple[int, str]:
 
         score = result["score"]
         reason = result["reason"]
-        limitation, kind = result['limitation'], result['kind']
+        limitation, kind, fit = result['limitation'], result['kind'], result['fit']
         if (type(score) is not int or not 0 <= score <= 100
                 or any(not isinstance(s, str) or not s.strip() or len(s) > 2000
-                       for s in (reason, limitation)) or kind not in ('paper', 'resource')):
+                       for s in (reason, limitation)) or kind not in ('paper', 'resource')
+                or fit not in ('core', 'adjacent', 'out_of_scope')):
             raise ValueError("Invalid AI score/reason")
         paper['llm_limitation'], paper['llm_kind'] = limitation.strip(), kind
-        if not paper.get('abstract'):
-            score = min(score, 69)
+        paper['llm_fit'] = fit
+        score = reading_score(paper, score, fit)
         return score, reason.strip()
     except Exception as e:
         raise RuntimeError(f"AI scoring failed ({type(e).__name__}); papers remain retryable") from None
@@ -1164,7 +1165,7 @@ def main(
     score_model = client.model if isinstance(client, CodexScorer) else 'gpt-5.1'
     for paper in keyword_candidates:
         if not current_score(paper, score_model):
-            for field in ('llm_score', 'llm_reason', 'llm_limitation', 'llm_kind',
+            for field in ('llm_score', 'llm_reason', 'llm_limitation', 'llm_kind', 'llm_fit',
                           'llm_model', 'llm_rubric', 'llm_input', 'combined_score'):
                 paper.pop(field, None)
 
@@ -1193,8 +1194,8 @@ def main(
         scored_papers.append(paper)
         time.sleep(0.2)
 
-    # Stage 4: Use reading priority, with small independent background/resource caps.
-    eligible = [p for p in scored_papers if p['llm_score'] >= MIN_LLM_SCORE]
+    # Stage 4: Require core question-level fit before applying email capacity.
+    eligible = [p for p in scored_papers if digest_eligible(p, MIN_LLM_SCORE)]
     relevant_ids = {get_paper_id(p) for p in eligible}
     rejected_papers = [p for p in scored_papers if get_paper_id(p) not in relevant_ids]
     relevant_papers, deferred_relevant = select_digest(
@@ -1204,7 +1205,7 @@ def main(
         # Retain scores to avoid paying for AI scoring again after delivery failure.
         save_pending_papers(preserved_pending + scored_papers + dropped)
 
-    print(f"\nPapers with reading relevance >= {MIN_LLM_SCORE}: {len(eligible)}")
+    print(f"\nCore research papers with reading relevance >= {MIN_LLM_SCORE}: {len(eligible)}")
     print(f"Selected {len(relevant_papers)} within section limits; {len(deferred_relevant)} eligible papers remain queued.")
 
     if not relevant_papers:

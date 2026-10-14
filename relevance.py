@@ -1,80 +1,86 @@
 """Shared research priorities and cache identity for abstract-based screening."""
 import hashlib
 import json
+import os
+from pathlib import Path
 
 MAX_ABSTRACT_CHARS = 12000
 READING_SECTIONS = ('Direct relevance', 'Transferable ideas', 'Background', 'Resources')
-SCORE_FIELDS = {'score': {'type': 'integer'}, 'reason': {'type': 'string'},
-                'limitation': {'type': 'string'},
-                'kind': {'type': 'string', 'enum': ['paper', 'resource']}}
+SCORE_FIELDS = {'score': {'type': 'integer'}, 'reason': {'type': 'string', 'pattern': r'\S'},
+                'limitation': {'type': 'string', 'pattern': r'\S'},
+                'kind': {'type': 'string', 'enum': ['paper', 'resource']},
+                'fit': {'type': 'string', 'enum': ['core', 'adjacent', 'out_of_scope']}}
 
 
-RELEVANCE_RULES = """Rate practical reading relevance (0-100) for a researcher studying
-how hippocampal circuits represent sensory evidence versus inferred position/task
-state, and how sensory cues are combined during navigation and decisions.
+BASE_RULES = """Judge whether this work belongs in a selective research reading list,
+using the research brief below when supplied. First establish question-level fit;
+only then assess reading priority. Do not justify relevance by any control or
+analysis that could be borrowed by an arbitrary neuroscience project.
 
-PRIMARY INTERESTS (each is sufficient; do not require a paper to cover all):
-- Multimodal/multisensory hippocampal or entorhinal coding and integration.
-- Multisensory navigation, sensory cue combination, conflict and reliability.
-- Navigation or position/state inference supported by auditory cues, including
-  behavioural work without hippocampal recordings.
-- Auditory hippocampal/entorhinal coding, including non-spatial sound/frequency
-  representations. This understudied direction deserves explicit priority.
-- Experiments distinguishing externally driven sensory activity from internally
-  generated task-state, goal or action-plan representations in hippocampal,
-  sensory or integration circuits.
-- Neural/computational mechanisms of evidence integration, latent-state inference,
-  belief updating or causal inference that directly inform these questions.
-- Causal circuitry and analysis methods with a demonstrated, specific application
-  to these questions. A useful paper need not study CA1, mice or navigation.
+FIT (required, independent of numerical score):
+- core: The evidence directly studies hippocampal/entorhinal sensory coding,
+  multisensory or auditory navigation, quantitative cue integration or state
+  inference, or discriminates external sensory input from internally inferred
+  position/task/goal/action representations. Other regions/species/methods can
+  qualify. A method qualifies only if its demonstrated result specifically solves
+  a relevant inference problem, not just because it analyses neural data.
+- adjacent: A substantive but indirect connection; the link needs an untested
+  extension, different interpretation, or a generic methodological borrowing.
+- out_of_scope: Topic/anatomy/method overlap without a substantive contribution.
 
-SCORE BY WHAT THE PAPER ACTUALLY TESTS AND ENABLES:
-- 95-100: Exceptionally direct evidence or a decisive method for a primary question.
-- 85-94: Direct work on a primary interest, including auditory hippocampal coding,
-  auditory navigation, multimodal hippocampus or multisensory navigation.
-- 70-84: Strong, concrete transferable insight into sensory/state/action coding,
-  cue integration, latent-state computation, circuitry or relevant analyses.
-- 55-69: Useful conceptual background: general spatial codes, replay or memory
-  computations without a direct test or demonstrated practical contribution to
-  the primary questions. Judge the actual contribution rather than treating any
-  task name or paper topic as a fixed score band.
-- 40-54: Peripheral background with a weak practical connection.
-- 0-39: Superficial overlap or unrelated work; generic clinical, molecular,
-  developmental, anatomical or technique-only studies without a concrete link.
+Conflations to avoid: detecting a sound is not auditory navigation; an imposed
+sequence index is not automatically an inferred state; multisensory effects are
+not automatically quantitative cue integration; oscillatory/physiological state
+is not necessarily task state; using sounds to reactivate memories is not by
+itself auditory hippocampal coding. Standard statistics, stimulus matching,
+perturbation, reward association and generic population analysis cannot alone
+establish core fit. Temporal predictability or separating stimulus and behaviour
+correlations does not by itself identify sensory versus inferred-state codes;
+a qualifying analysis must distinguish relevant competing represented variables.
+Predicting an upcoming stimulus, an omission response, or sensory adaptation alone
+is not evidence of inferred position/task progress or action-plan coding. Outside
+the explicit hippocampal/entorhinal sensory-coding interests, such effects need
+a demonstrated link to a relevant represented variable or integration computation.
+Do not reject work simply because it lacks CA1, navigation,
+a particular species or our exact task. Direct sensory response mapping in
+hippocampal/entorhinal circuits can independently qualify.
 
-CALIBRATION AND EVIDENCE:
-Hippocampus, CA1, representation, multimodal, Bayesian or navigation words alone
-never justify a high score. Multimodal imaging/data fusion is not evidence of
-multisensory neural integration. Distinguish sensory responses, memory comparison,
-inferred state, action plans and cue integration; do not equate them.
-A basic sensory localisation/discrimination task is not automatically a test of
-spatial maps, navigation or inferred position. It can be directly relevant when
-it tests cue integration, reliability, conflict or a mechanistic hypothesis that
-informs a primary question. Generic sensory prediction, contextual modulation
-or learning is background unless its demonstrated findings enable a specific
-experimental or analytical contribution. A physiological network state is not
-necessarily an inferred task state.
-To justify 70+, identify an actual manipulation, control, analysis or competing
-prediction the researcher could borrow. A generic analogy to context, prediction,
-sensory processing or action is insufficient. Score the demonstrated connection,
-not a speculative future extension. Lack of CA1 recordings alone is not a limitation.
-Do not penalize human studies, fMRI, behavioural work or other brain regions merely
-for their methods/species; judge what the findings contribute. Do not inflate scores
-for famous authors, prestige or speculation. Reading relevance is not study quality,
-probability of correctness, or a claim that the full paper has been reviewed.
-With no abstract, score conservatively from the title, cap at 69, and state the
-evidence limitation. An explicit primary topic can still be included for inspection.
-If evidence_truncated is true, acknowledge incomplete evidence; absence of results
-in this excerpt is not evidence that the complete abstract or paper has no results.
+READING PRIORITY, after fit:
+90-100: exceptionally direct contribution to a primary research question.
+80-89: clear primary-question contribution worth prioritising for reading.
+60-79: substantive adjacent insight; not for the default email.
+40-59: distant background. 0-39: negligible project fit.
+An adjacent work cannot exceed79; out_of_scope cannot exceed49. Do not inflate
+importance because a digest would otherwise be short. Resources are classified
+separately and are not default email recommendations. Relevance is neither study
+quality nor probability of correctness. No named-paper score anchors apply.
 
-Return score, reason, limitation and kind. reason must combine an established
-finding with a specific practical contribution (or explicitly say no direct
-contribution is established). limitation must identify the missing test or
-remaining alternative, distinct from the contribution; do not invent flaws.
-kind is resource for datasets/software/data releases, otherwise paper. Evaluate
-resources for practical usefulness, not nonexistent experimental findings.
-Use only the supplied evidence and never invent results or force connections.
+Use only supplied evidence. Distinguish established findings from the author's
+interpretation and from proposed extensions. With no usable abstract, state the
+evidence limit and cap the score at69. If evidence_truncated is true, acknowledge
+incomplete evidence without claiming the full paper lacks results.
+
+Return score, fit, reason, limitation and kind (paper|resource). All text fields
+must be nonempty. For out-of-scope work, state its scope mismatch as the limitation
+rather than leaving it blank or inventing a scientific flaw. reason must state
+an actual finding and its specific question-level contribution, or explicitly
+say no direct contribution is established. limitation must identify the missing
+test or competing explanation, without inventing flaws. For datasets/software,
+describe available data and supported analyses, not nonexistent findings. Never
+quote private unpublished project details in the returned explanations.
 """
+
+
+def load_research_profile(path):
+    text = Path(path).read_text(encoding='utf-8').strip()
+    if not text or len(text) > 20000:
+        raise ValueError('Research profile must contain 1-20000 characters')
+    return text
+
+
+_profile_path = os.environ.get('PAPER_SCOUT_PROFILE_FILE')
+RESEARCH_PROFILE = load_research_profile(_profile_path) if _profile_path else ''
+RELEVANCE_RULES = BASE_RULES + ('\nPRIVATE RESEARCH BRIEF:\n' + RESEARCH_PROFILE if RESEARCH_PROFILE else '')
 RELEVANCE_VERSION = hashlib.sha256(RELEVANCE_RULES.encode()).hexdigest()[:16]
 
 
@@ -96,6 +102,8 @@ def score_input(paper):
 def reading_section(paper):
     if paper.get('llm_kind') == 'resource' or paper.get('work_type') in ('dataset', 'software'):
         return 'Resources'
+    if paper.get('llm_fit') == 'core':
+        return 'Direct relevance'
     score = paper['llm_score']
     return 'Direct relevance' if score >= 85 else 'Transferable ideas' if score >= 70 else 'Background'
 
@@ -116,6 +124,20 @@ def select_digest(papers, limits, maximum):
     return selected, deferred
 
 
+def reading_score(paper, score, fit):
+    cap = 100 if fit == 'core' else 79 if fit == 'adjacent' else 49
+    if len(paper.get('abstract') or '') < 50:
+        cap = min(cap, 69)
+    return min(score, cap)
+
+
+def digest_eligible(paper, minimum):
+    return (paper.get('llm_fit') == 'core' and paper.get('llm_kind') == 'paper'
+            and paper.get('work_type') not in ('dataset', 'software')
+            and len(paper.get('abstract') or '') >= 50
+            and paper['llm_score'] >= minimum)
+
+
 def current_score(paper, model):
     """Reuse only validated scores from the same rubric and model."""
     return (paper.get('llm_rubric') == RELEVANCE_VERSION
@@ -127,4 +149,5 @@ def current_score(paper, model):
             and bool(paper['llm_reason'].strip())
             and isinstance(paper.get('llm_limitation'), str)
             and bool(paper['llm_limitation'].strip())
-            and paper.get('llm_kind') in ('paper', 'resource'))
+            and paper.get('llm_kind') in ('paper', 'resource')
+            and paper.get('llm_fit') in ('core', 'adjacent', 'out_of_scope'))
