@@ -32,10 +32,14 @@ brain region, paper title nor a previous digest determines the score. The prompt
 contains no paper-specific examples or prescribed paper scores. Every recommendation requires a specific
 practical contribution and an explicit missing test or remaining alternative.
 
-Automatic email now requires a **core** question-level connection, a usable
-abstract, a research-paper classification and reading relevance of at least80.
-It contains at most eight directly relevant papers. Adjacent/background papers
-and datasets do not fill email slots, even if their numeric scores are high.
+Automatic email requires a usable abstract and research-paper classification.
+Primary recommendations require **core** question-level fit and relevance80+,
+with at most eight papers. A separate **Multisensory integration** section allows
+up to two broader integration papers scoring70+ (capped79), including audiovisual
+integration in cortex without navigation or hippocampal results. Demonstrated
+integration or crossmodal interaction is required; merely presenting two
+modalities is insufficient. Primary recommendations come first. Other adjacent/
+background papers and datasets do not fill email slots.
 A short or empty digest is acceptable; no qualifying papers means no email.
 Eligible overflow stays queued rather than being marked sent.
 
@@ -124,8 +128,9 @@ OpenAlex references: [authentication](https://help.openalex.org/api/authenticati
 | `MAX_LLM_CANDIDATES` | 200 | Cost ceiling on AI scoring. Truncation is now logged loudly |
 | `MIN_KEYWORD_SCORE` | 12 | Raw keyword score needed to become a candidate |
 | `MIN_LLM_SCORE` | 80 | Minimum score after core-fit and evidence gates |
-| `DIGEST_SECTION_LIMITS` | 8 / 0 / 0 / 0 | Direct / transferable / background / resources maxima |
-| `MAX_PAPERS_PER_DIGEST` | 20 | Additional overall ceiling; default section limits allow at most eight |
+| `MIN_INTEGRATION_SCORE` | 70 | Minimum for broader multisensory integration |
+| `DIGEST_SECTION_LIMITS` | 8 / 2 / 0 / 0 / 0 | Direct / multisensory integration / transferable / background / resources maxima |
+| `MAX_PAPERS_PER_DIGEST` | 20 | Additional overall ceiling; default section limits allow at most ten |
 | `SEEN_RETENTION_DAYS` | 365 | How long a paper stays suppressed as already seen |
 
 A paper with a core term in its **title** (hippocampal, entorhinal, theta, replay, remapping, multisensory, ...) is always ranked ahead of keyword-dense abstracts when the candidate cap bites.

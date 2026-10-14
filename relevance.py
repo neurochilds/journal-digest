@@ -5,11 +5,11 @@ import os
 from pathlib import Path
 
 MAX_ABSTRACT_CHARS = 12000
-READING_SECTIONS = ('Direct relevance', 'Transferable ideas', 'Background', 'Resources')
+READING_SECTIONS = ('Direct relevance', 'Multisensory integration', 'Transferable ideas', 'Background', 'Resources')
 SCORE_FIELDS = {'score': {'type': 'integer'}, 'reason': {'type': 'string', 'pattern': r'\S'},
                 'limitation': {'type': 'string', 'pattern': r'\S'},
                 'kind': {'type': 'string', 'enum': ['paper', 'resource']},
-                'fit': {'type': 'string', 'enum': ['core', 'adjacent', 'out_of_scope']}}
+                'fit': {'type': 'string', 'enum': ['core', 'broader_integration', 'adjacent', 'out_of_scope']}}
 
 
 BASE_RULES = """Judge whether this work belongs in a selective research reading list,
@@ -19,11 +19,18 @@ analysis that could be borrowed by an arbitrary neuroscience project.
 
 FIT (required, independent of numerical score):
 - core: The evidence directly studies hippocampal/entorhinal sensory coding,
-  multisensory or auditory navigation, quantitative cue integration or state
-  inference, or discriminates external sensory input from internally inferred
+  multisensory or auditory navigation, cue integration or state inference that
+  directly addresses a primary question in the brief, or discriminates external sensory input from internally inferred
   position/task/goal/action representations. Other regions/species/methods can
   qualify. A method qualifies only if its demonstrated result specifically solves
   a relevant inference problem, not just because it analyses neural data.
+- broader_integration: General multisensory/crossmodal integration is a real,
+  secondary interest, including audiovisual integration in cortex. Evidence of
+  sensory combination, interaction, binding, integration/segregation, or their
+  neural mechanisms qualifies without navigation, hippocampus, quantitative
+  optimality or inferred task-state coding. Mere presentation of two modalities
+  or a generic claim about multisensory relevance is insufficient. Use core
+  instead when the demonstrated contribution directly addresses a primary question.
 - adjacent: A substantive but indirect connection; the link needs an untested
   extension, different interpretation, or a generic methodological borrowing.
 - out_of_scope: Topic/anatomy/method overlap without a substantive contribution.
@@ -40,7 +47,9 @@ a qualifying analysis must distinguish relevant competing represented variables.
 Predicting an upcoming stimulus, an omission response, or sensory adaptation alone
 is not evidence of inferred position/task progress or action-plan coding. Outside
 the explicit hippocampal/entorhinal sensory-coding interests, such effects need
-a demonstrated link to a relevant represented variable or integration computation.
+a demonstrated link to a relevant represented variable or integration computation
+to qualify as core. General integration findings can instead qualify for the
+separate broader_integration interest without such a primary-question link.
 Do not reject work simply because it lacks CA1, navigation,
 a particular species or our exact task. Direct sensory response mapping in
 hippocampal/entorhinal circuits can independently qualify.
@@ -48,9 +57,11 @@ hippocampal/entorhinal circuits can independently qualify.
 READING PRIORITY, after fit:
 90-100: exceptionally direct contribution to a primary research question.
 80-89: clear primary-question contribution worth prioritising for reading.
-60-79: substantive adjacent insight; not for the default email.
+70-79: worthwhile broader multisensory integration, below primary priorities.
+60-79: substantive adjacent insight; not for the default email unless it meets
+the explicit broader_integration definition and its separate threshold.
 40-59: distant background. 0-39: negligible project fit.
-An adjacent work cannot exceed79; out_of_scope cannot exceed49. Do not inflate
+Broader integration and adjacent work cannot exceed79; out_of_scope cannot exceed49. Do not inflate
 importance because a digest would otherwise be short. Resources are classified
 separately and are not default email recommendations. Relevance is neither study
 quality nor probability of correctness. No named-paper score anchors apply.
@@ -104,6 +115,8 @@ def reading_section(paper):
         return 'Resources'
     if paper.get('llm_fit') == 'core':
         return 'Direct relevance'
+    if paper.get('llm_fit') == 'broader_integration':
+        return 'Multisensory integration'
     score = paper['llm_score']
     return 'Direct relevance' if score >= 85 else 'Transferable ideas' if score >= 70 else 'Background'
 
@@ -115,7 +128,7 @@ def digest_sections(papers):
 
 
 def select_digest(papers, limits, maximum):
-    """Keep a small background/resource allowance; defer eligible overflow."""
+    """Apply section capacities in priority order; defer eligible overflow."""
     selected, deferred = [], []
     for section, group in digest_sections(papers):
         count = min(limits[section], max(0, maximum - len(selected)))
@@ -125,17 +138,19 @@ def select_digest(papers, limits, maximum):
 
 
 def reading_score(paper, score, fit):
-    cap = 100 if fit == 'core' else 79 if fit == 'adjacent' else 49
+    cap = 100 if fit == 'core' else 79 if fit in ('broader_integration', 'adjacent') else 49
     if len(paper.get('abstract') or '') < 50:
         cap = min(cap, 69)
     return min(score, cap)
 
 
-def digest_eligible(paper, minimum):
-    return (paper.get('llm_fit') == 'core' and paper.get('llm_kind') == 'paper'
+def digest_eligible(paper, minimum, integration_minimum=70):
+    fit = paper.get('llm_fit')
+    threshold = minimum if fit == 'core' else integration_minimum
+    return (fit in ('core', 'broader_integration') and paper.get('llm_kind') == 'paper'
             and paper.get('work_type') not in ('dataset', 'software')
             and len(paper.get('abstract') or '') >= 50
-            and paper['llm_score'] >= minimum)
+            and paper['llm_score'] >= threshold)
 
 
 def current_score(paper, model):
@@ -150,4 +165,4 @@ def current_score(paper, model):
             and isinstance(paper.get('llm_limitation'), str)
             and bool(paper['llm_limitation'].strip())
             and paper.get('llm_kind') in ('paper', 'resource')
-            and paper.get('llm_fit') in ('core', 'adjacent', 'out_of_scope'))
+            and paper.get('llm_fit') in ('core', 'broader_integration', 'adjacent', 'out_of_scope'))

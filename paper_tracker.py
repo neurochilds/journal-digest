@@ -36,7 +36,7 @@ from openalex_client import get_json as openalex_get_json, FETCH_BUDGET_SECONDS
 from config import (
     GMAIL_ADDRESS, GMAIL_APP_PASSWORD, RECIPIENT_EMAIL,
     OPENAI_API_KEY, JOURNAL_FEEDS, KEYWORDS,
-    MIN_KEYWORD_SCORE, MIN_LLM_SCORE, DAYS_TO_CHECK, MAX_PAPERS_PER_DIGEST,
+    MIN_KEYWORD_SCORE, MIN_LLM_SCORE, MIN_INTEGRATION_SCORE, DAYS_TO_CHECK, MAX_PAPERS_PER_DIGEST,
     MAX_LLM_CANDIDATES, DIGEST_SECTION_LIMITS, SEEN_RETENTION_DAYS, PUBLICATION_OVERLAP_DAYS
 )
 
@@ -546,7 +546,7 @@ def relevance_prompt(paper: dict) -> str:
             + json.dumps(paper_evidence(paper)) + '\n'
             'Respond with ONLY a JSON object, no markdown: '
             '{"score": <0-100>, "reason": "<finding and specific practical contribution>", '
-            '"limitation": "<missing test or remaining alternative>", "kind": "paper|resource", "fit": "core|adjacent|out_of_scope"}')
+            '"limitation": "<missing test or remaining alternative>", "kind": "paper|resource", "fit": "core|broader_integration|adjacent|out_of_scope"}')
 
 
 def get_llm_relevance_score(client: OpenAI, paper: dict) -> tuple[int, str]:
@@ -583,7 +583,7 @@ def get_llm_relevance_score(client: OpenAI, paper: dict) -> tuple[int, str]:
         if (type(score) is not int or not 0 <= score <= 100
                 or any(not isinstance(s, str) or not s.strip() or len(s) > 2000
                        for s in (reason, limitation)) or kind not in ('paper', 'resource')
-                or fit not in ('core', 'adjacent', 'out_of_scope')):
+                or fit not in ('core', 'broader_integration', 'adjacent', 'out_of_scope')):
             raise ValueError("Invalid AI score/reason")
         paper['llm_limitation'], paper['llm_kind'] = limitation.strip(), kind
         paper['llm_fit'] = fit
@@ -1194,8 +1194,8 @@ def main(
         scored_papers.append(paper)
         time.sleep(0.2)
 
-    # Stage 4: Require core question-level fit before applying email capacity.
-    eligible = [p for p in scored_papers if digest_eligible(p, MIN_LLM_SCORE)]
+    # Stage 4: Apply fit-specific thresholds before section capacities.
+    eligible = [p for p in scored_papers if digest_eligible(p, MIN_LLM_SCORE, MIN_INTEGRATION_SCORE)]
     relevant_ids = {get_paper_id(p) for p in eligible}
     rejected_papers = [p for p in scored_papers if get_paper_id(p) not in relevant_ids]
     relevant_papers, deferred_relevant = select_digest(
@@ -1205,7 +1205,7 @@ def main(
         # Retain scores to avoid paying for AI scoring again after delivery failure.
         save_pending_papers(preserved_pending + scored_papers + dropped)
 
-    print(f"\nCore research papers with reading relevance >= {MIN_LLM_SCORE}: {len(eligible)}")
+    print(f"\nEmail-eligible research papers (core >= {MIN_LLM_SCORE}; multisensory integration >= {MIN_INTEGRATION_SCORE}): {len(eligible)}")
     print(f"Selected {len(relevant_papers)} within section limits; {len(deferred_relevant)} eligible papers remain queued.")
 
     if not relevant_papers:
