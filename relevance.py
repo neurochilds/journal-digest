@@ -6,8 +6,8 @@ from pathlib import Path
 
 MAX_ABSTRACT_CHARS = 12000
 READING_SECTIONS = ('Direct relevance', 'Transferable ideas', 'Background', 'Resources')
-SCORE_FIELDS = {'score': {'type': 'integer'}, 'reason': {'type': 'string'},
-                'limitation': {'type': 'string'},
+SCORE_FIELDS = {'score': {'type': 'integer'}, 'reason': {'type': 'string', 'pattern': r'\S'},
+                'limitation': {'type': 'string', 'pattern': r'\S'},
                 'kind': {'type': 'string', 'enum': ['paper', 'resource']},
                 'fit': {'type': 'string', 'enum': ['core', 'adjacent', 'out_of_scope']}}
 
@@ -60,7 +60,9 @@ interpretation and from proposed extensions. With no usable abstract, state the
 evidence limit and cap the score at69. If evidence_truncated is true, acknowledge
 incomplete evidence without claiming the full paper lacks results.
 
-Return score, fit, reason, limitation and kind (paper|resource). reason must state
+Return score, fit, reason, limitation and kind (paper|resource). All text fields
+must be nonempty. For out-of-scope work, state its scope mismatch as the limitation
+rather than leaving it blank or inventing a scientific flaw. reason must state
 an actual finding and its specific question-level contribution, or explicitly
 say no direct contribution is established. limitation must identify the missing
 test or competing explanation, without inventing flaws. For datasets/software,
